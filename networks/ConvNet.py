@@ -1,46 +1,13 @@
 import torch
-from torch.utils import data
-import numpy as np
-import torch.nn.functional as F
-from torch.nn import Conv2d, Linear,MaxPool2d, BatchNorm2d, Dropout
 import torch.nn as nn
-import matplotlib.pyplot as plt
-import torchvision
-from mpl_toolkits.axes_grid1 import ImageGrid
-from torchsummary import summary
-from skimage.transform import resize
-import copy
 from spp_layer import spatial_pyramid_pool
+from layers import L2Norm
 
 
-class L2Norm(nn.Module):
-    def __init__(self):
-        super(L2Norm,self).__init__()
-        self.eps = 1e-10
-    def forward(self, x):
-        norm = torch.sqrt(torch.sum(x * x, dim = 1) + self.eps)
-        x= x / norm.unsqueeze(-1).expand_as(x)
-        return x
-
-class L1Norm(nn.Module):
-    def __init__(self):
-        super(L1Norm,self).__init__()
-        self.eps = 1e-10
-    def forward(self, x):
-        norm = torch.sum(torch.abs(x), dim = 1) + self.eps
-        x= x / norm.expand_as(x)
-        return x
-
-
-
-
-
-
-
-class Model(nn.Module):
+class ConvNet(nn.Module):
 
     def __init__(self):
-        super(Model, self).__init__()
+        super(ConvNet, self).__init__()
 
         self.block = nn.Sequential(
             nn.Conv2d(1, 32, kernel_size=3, padding=1, bias=False),
@@ -83,19 +50,18 @@ class Model(nn.Module):
         return
 
     def input_norm(self, x):
-        flat = x.view(x.size(0), -1)
+        # flat = x.view(x.size(0), -1)
+        flat = x.reshape(x.size(0), -1)
         mp = torch.mean(flat, dim=1)
         sp = torch.std(flat, dim=1) + 1e-7
         return (x - mp.detach().unsqueeze(-1).unsqueeze(-1).unsqueeze(-1).expand_as(x)) / sp.detach().unsqueeze(
             -1).unsqueeze(-1).unsqueeze(1).expand_as(x)
 
-
     def FreezeCnn(self, OnOff):
         for param in self.parameters():
             param.requires_grad = not OnOff
 
-
-    def forward(self, input1,Mode = 'Normalized'):
+    def forward(self, input1, Mode='Normalized'):
         bs = input1.size(0)
         feat = self.block(self.input_norm(input1))
         spp_a = spatial_pyramid_pool(feat, bs, [int(feat.size(2)), int(feat.size(3))], self.output_num)
@@ -105,17 +71,7 @@ class Model(nn.Module):
 
         feature_a = self.fc1(spp_a).view(bs, -1)
 
-        if Mode ==  'Normalized':
+        if Mode == 'Normalized':
             return L2Norm()(feature_a)
         else:
             return feature_a
-
-
-def weights_init(m):
-    if isinstance(m, nn.Conv2d):
-        nn.init.orthogonal_(m.weight.data, gain=0.3)
-        try:
-            nn.init.constant(m.bias.data, 0.01)
-        except:
-            pass
-    return

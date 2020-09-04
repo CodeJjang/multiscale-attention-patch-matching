@@ -1,18 +1,15 @@
 import torch
-from torch.utils import data
 import numpy as np
 import torch.nn.functional as F
 from torch.nn import Conv2d, Linear, MaxPool2d, BatchNorm2d, Dropout
 import torch.nn as nn
 import matplotlib.pyplot as plt
-import torchvision
 from mpl_toolkits.axes_grid1 import ImageGrid
-from skimage.transform import resize, rotate
 import copy
-from nets import Model
-import cv2
+from networks.ConvNet import ConvNet
+
+
 # import torchfunc
-import albumentations as A
 
 
 def separate_cnn_paras(modules):
@@ -41,7 +38,6 @@ def ComputeAllErros(TestData, net, device, StepSize):
         Loss += Errors['TestError']
 
     Errors['Mean'] /= len(TestData)
-
 
 
 def FPR95Accuracy(Dist, Labels):
@@ -181,17 +177,6 @@ def imshow(img):
     plt.show()
 
 
-class L2Norm(nn.Module):
-    def __init__(self):
-        super(L2Norm, self).__init__()
-        self.eps = 1e-10
-
-    def forward(self, x):
-        norm = torch.sqrt(torch.sum(x * x, dim=1) + self.eps)
-        x = x / norm.unsqueeze(-1).expand_as(x)
-        return x
-
-
 # Define a Convolutional Neural Network
 class BasicSingleNet(nn.Module):
     def __init__(self):
@@ -264,9 +249,9 @@ class MetricLearningCnn(nn.Module):
         # self.netAS1 = SingleNet()
         # self.netAS2 = SingleNet()
 
-        self.netS = Model()
-        self.netAS1 = Model()
-        self.netAS2 = Model()
+        self.netS = ConvNet()
+        self.netAS1 = ConvNet()
+        self.netAS2 = ConvNet()
 
         self.fc1 = Linear(128 * 2, 128)
         self.fc2 = Linear(128 * 2, 128)
