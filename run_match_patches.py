@@ -16,7 +16,7 @@ from multiprocessing import Pool
 import argparse
 # my classes
 from my_classes import imshow, ShowRowImages, ShowTwoRowImages, EvaluateSofmaxNet, EvaluateDualNets
-from my_classes import DatasetPairwiseTriplets, FPR95Accuracy,separate_cnn_paras
+from my_classes import DatasetPairwiseTriplets, FPR95Accuracy, separate_cnn_paras
 from my_classes import SingleNet, MetricLearningCnn, EvaluateNet, SiamesePairwiseSoftmax, NormalizeImages
 from losses import ContrastiveLoss, TripletLoss, OnlineTripletLoss, OnlineHardNegativeMiningTripletLoss
 from losses import InnerProduct, FindFprTrainingSet, FPRLoss, PairwiseLoss, HardTrainingLoss
@@ -30,6 +30,7 @@ warnings.filterwarnings("ignore", message="UserWarning: albumentations.augmentat
 
 from multiprocessing import Process, freeze_support
 
+
 def parse_args():
     parser = argparse.ArgumentParser(description='Match multimodal patches.')
     parser.add_argument('--models', help='models path')
@@ -38,6 +39,7 @@ def parse_args():
     parser.add_argument('--train', help='train data path')
 
     return parser.parse_args()
+
 
 def main():
     args = parse_args()
@@ -73,7 +75,6 @@ def main():
     writer = SummaryWriter(LogsDirName)
     LowestError = 1e10
 
-
     # ----------------------------     configuration   ---------------------------
     Augmentation = {}
     Augmentation["HorizontalFlip"] = False
@@ -93,9 +94,9 @@ def main():
         # GeneratorMode = 'PairwiseRot'
         GeneratorMode = 'Pairwise'
         CnnMode = 'PairwiseSymmetric'
-        #criterion = OnlineHardNegativeMiningTripletLoss(margin=1, Mode='Random')
+        # criterion = OnlineHardNegativeMiningTripletLoss(margin=1, Mode='Random')
         criterion = OnlineHardNegativeMiningTripletLoss(margin=1, Mode='Hardest')
-        #criterion         = OnlineHardNegativeMiningTripletLoss(margin=1, Mode='MostHardest', HardRatio=1.0/8)
+        # criterion         = OnlineHardNegativeMiningTripletLoss(margin=1, Mode='MostHardest', HardRatio=1.0/8)
         Description = 'PairwiseSymmetric Hardest'
 
         InitializeOptimizer = True
@@ -130,7 +131,7 @@ def main():
         FreezeAsymmetricCnn = False
 
         LearningRate = 1e-4
-        OuterBatchSize = 24;
+        OuterBatchSize = 24
         InnerBatchSize = 6
 
         Augmentation["Test"] = {'Do': False}
@@ -149,19 +150,19 @@ def main():
         GeneratorMode = 'Pairwise'
         # CnnMode            = 'HybridRot'
         CnnMode = 'Hybrid'
-        #criterion           = OnlineHardNegativeMiningTripletLoss(margin=1, Mode='Random')
-        #criterion           = OnlineHardNegativeMiningTripletLoss(margin=1, Mode='Hardest')
-        criterion = OnlineHardNegativeMiningTripletLoss(margin=1, Mode='HardPos', HardRatio=1.0/2, PosRatio=1./2)
-        #HardestCriterion = OnlineHardNegativeMiningTripletLoss(margin=1, Mode='Hardest')
+        # criterion           = OnlineHardNegativeMiningTripletLoss(margin=1, Mode='Random')
+        # criterion           = OnlineHardNegativeMiningTripletLoss(margin=1, Mode='Hardest')
+        criterion = OnlineHardNegativeMiningTripletLoss(margin=1, Mode='HardPos', HardRatio=1.0 / 2, PosRatio=1. / 2)
+        # HardestCriterion = OnlineHardNegativeMiningTripletLoss(margin=1, Mode='Hardest')
         InitializeOptimizer = True
         OuterBatchSize = 16  # 24
         InnerBatchSize = 4 * 12  # 24
         LearningRate = 1e-2
 
         FprHardNegatives = False
-        StartBestModel   = True
+        StartBestModel = True
 
-        FreezeSymmetricCnn  = True
+        FreezeSymmetricCnn = True
         FreezeAsymmetricCnn = False
 
         AssymetricInitializationPhase = False
@@ -178,7 +179,6 @@ def main():
         TestDecimation = 20
 
     ContinueMode = True
-
 
     # ----------------------------- read data----------------------------------------------
     Data = read_matlab_imdb(TrainFile)
@@ -258,14 +258,14 @@ def main():
         if FileList:
             FileList.sort(key=os.path.getmtime)
 
-            print(FileList[-1] + ' loded')
+            print(FileList[-1] + ' loaded')
 
             checkpoint = torch.load(FileList[-1])
-            net.load_state_dict(checkpoint['state_dict'],strict=True)
+            net.load_state_dict(checkpoint['state_dict'], strict=True)
             try:
                 optimizer.load_state_dict(checkpoint['optimizer'])
             except:
-                aa=5
+                aa = 5
 
             StartEpoch = checkpoint['epoch'] + 1
 
@@ -293,12 +293,12 @@ def main():
         net.module.netAS2 = copy.deepcopy(net.module.netS)
 
     if InitializeOptimizer:
-        #optimizer = torch.optim.Adam(net.parameters(), lr=LearningRate,weight_decay=0)
+        # optimizer = torch.optim.Adam(net.parameters(), lr=LearningRate,weight_decay=0)
 
         BaseCnnParams = net.module.BaseCnnParams()
         HeadCnnParams = net.module.HeadCnnParams()
 
-        optimizer = torch.optim.Adam(net.parameters(), lr=LearningRate,weight_decay=0)
+        optimizer = torch.optim.Adam(net.parameters(), lr=LearningRate, weight_decay=0)
 
         if False:
             optimizer = torch.optim.Adam(
@@ -306,20 +306,14 @@ def main():
                 lr=LearningRate)
 
             optimizer = optim.SGD([{'params': net.module.netS.parameters(), 'lr': 1e-5},
-                    {'params': net.module.netAS1.parameters(), 'lr': 1e-5},
-                    {'params': net.module.netAS2.parameters(), 'lr': 1e-5},
-                    {'params': net.module.fc1.parameters(), 'lr': 1e-4},
-                    {'params': net.module.fc2.parameters(), 'lr': 1e-4},
-                    {'params': net.module.fc3.parameters(), 'lr': 1e-4}],
-                                  lr=LearningRate, momentum=0.0, weight_decay=0.00)#momentum=0.9
+                                   {'params': net.module.netAS1.parameters(), 'lr': 1e-5},
+                                   {'params': net.module.netAS2.parameters(), 'lr': 1e-5},
+                                   {'params': net.module.fc1.parameters(), 'lr': 1e-4},
+                                   {'params': net.module.fc2.parameters(), 'lr': 1e-4},
+                                   {'params': net.module.fc3.parameters(), 'lr': 1e-4}],
+                                  lr=LearningRate, momentum=0.0, weight_decay=0.00)  # momentum=0.9
 
     # ------------------------------------------------------------------------------------------
-
-
-
-
-
-
 
     # -------------------------------------  freeze layers --------------------------------------
     net.module.FreezeSymmetricCnn(FreezeSymmetricCnn)
@@ -351,7 +345,6 @@ def main():
             pos1 = np.reshape(pos1, (pos1.shape[0] * pos1.shape[1], 1, pos1.shape[2], pos1.shape[3]), order='F')
             pos2 = np.reshape(pos2, (pos2.shape[0] * pos2.shape[1], 1, pos2.shape[2], pos2.shape[3]), order='F')
 
-
             if GeneratorMode == 'Pairwise':
 
                 if (CnnMode == 'PairwiseAsymmetric') | (CnnMode == 'PairwiseSymmetric'):
@@ -364,15 +357,13 @@ def main():
                     Embed = net(pos1, pos2)
                     loss = criterion(Embed['Emb1'], Embed['Emb2']) + criterion(Embed['Emb2'], Embed['Emb1'])
 
-
                 if CnnMode == 'Hybrid':
 
                     # GPUtil.showUtilization()
                     if FprHardNegatives:
 
                         Embed = Compute_FPR_HardNegatives(net, pos1, pos2, device, FprValPos=0.9 * FPR95,
-                                                          FprValNeg=1.1*FPR95, MaxNoImages=MaxNoImages)
-
+                                                          FprValNeg=1.1 * FPR95, MaxNoImages=MaxNoImages)
 
                         Embed['PosIdx1'], Embed['PosIdx2'] = Embed['PosIdx1'].to(device), Embed['PosIdx2'].to(device)
                         EmbedPos = net(Embed['PosIdx1'], Embed['PosIdx2'])
@@ -387,12 +378,12 @@ def main():
                             EmbedNegA = net(Embed['NegIdxA1'], Embed['NegIdxA2'])
 
                             neg_loss1 = PairwiseLoss(EmbedNegA['Hybrid1'], EmbedNegA['Hybrid2'])
-                            loss     -= neg_loss1
-                            neg_loss  = neg_loss1.item()
+                            loss -= neg_loss1
+                            neg_loss = neg_loss1.item()
 
-                        #loss -= PairwiseLoss(EmbedNegA['EmbAsym1'], EmbedNegA['EmbAsym2'])
+                        # loss -= PairwiseLoss(EmbedNegA['EmbAsym1'], EmbedNegA['EmbAsym2'])
 
-                            #del EmbedNegA
+                        # del EmbedNegA
 
                         if (Embed['NegIdxB1'].nelement() > 1) & (Embed['NegIdxB1'].shape[0] > 1):
                             Embed['NegIdxB1'], Embed['NegIdxB2'] = Embed['NegIdxB1'].to(device), Embed['NegIdxB2'].to(
@@ -400,29 +391,27 @@ def main():
                             EmbedNegB = net(Embed['NegIdxB1'], Embed['NegIdxB2'])
 
                             neg_loss2 = PairwiseLoss(EmbedNegB['Hybrid1'], EmbedNegB['Hybrid2'])
-                            loss     -= neg_loss2
+                            loss -= neg_loss2
                             neg_loss += neg_loss2.item()
-
 
                         del Embed, EmbedPos
 
                         running_loss_neg += neg_loss
                         running_loss_pos += pos_loss
                     else:
-                            pos1, pos2 = pos1.to(device), pos2.to(device)
+                        pos1, pos2 = pos1.to(device), pos2.to(device)
 
+                        # loss  = HardTrainingLoss(net, pos1, pos2,PosRatio=0.5,HardRatio=0.5,T=1,device=device)
+                        # loss += HardTrainingLoss(net, pos2, pos1, PosRatio=0.5, HardRatio=0.5, T=1, device=device)
 
-                            #loss  = HardTrainingLoss(net, pos1, pos2,PosRatio=0.5,HardRatio=0.5,T=1,device=device)
-                            #loss += HardTrainingLoss(net, pos2, pos1, PosRatio=0.5, HardRatio=0.5, T=1, device=device)
+                        # Embed = net(pos1, pos2, p=0.3)
+                        # loss = criterion(Embed['Hybrid1'], Embed['Hybrid2']) + criterion(Embed['Hybrid2'],Embed['Hybrid1'])
+                        # loss += InnerProductLoss(Embed['EmbAsym1'], Embed['EmbSym1']) + InnerProductLoss(Embed['EmbAsym2'],Embed['EmbSym2'])
+                        # loss +=criterion(Embed['EmbSym1'], Embed['EmbSym2']) + criterion(Embed['EmbSym2'],Embed['EmbSym1'])
+                        # loss +=criterion(Embed['EmbAsym1'], Embed['EmbAsym2']) + criterion(Embed['EmbAsym2'],Embed['EmbAsym1'])
 
-                            #Embed = net(pos1, pos2, p=0.3)
-                            #loss = criterion(Embed['Hybrid1'], Embed['Hybrid2']) + criterion(Embed['Hybrid2'],Embed['Hybrid1'])
-                            #loss += InnerProductLoss(Embed['EmbAsym1'], Embed['EmbSym1']) + InnerProductLoss(Embed['EmbAsym2'],Embed['EmbSym2'])
-                            #loss +=criterion(Embed['EmbSym1'], Embed['EmbSym2']) + criterion(Embed['EmbSym2'],Embed['EmbSym1'])
-                            #loss +=criterion(Embed['EmbAsym1'], Embed['EmbAsym2']) + criterion(Embed['EmbAsym2'],Embed['EmbAsym1'])
-
-                            #TrainFpr = ComputeFPR(Embed['Hybrid1'], Embed['Hybrid2'], FPR95 * 0.9, FPR95 * 1.1)
-                            # print('TrainFpr = ' + repr(TrainFpr))
+                        # TrainFpr = ComputeFPR(Embed['Hybrid1'], Embed['Hybrid2'], FPR95 * 0.9, FPR95 * 1.1)
+                        # print('TrainFpr = ' + repr(TrainFpr))
 
             loss /= grad_accumulation_steps
 
@@ -435,8 +424,7 @@ def main():
                 # zero the parameter gradients
                 optimizer.zero_grad()
 
-            running_loss     += loss.item()
-
+            running_loss += loss.item()
 
             PrintStep = 1000
             if (i % PrintStep == 0):  # & (i>0):
@@ -448,7 +436,8 @@ def main():
                     running_loss_neg /= PrintStep
                     running_loss_pos /= PrintStep
 
-                    print('running_loss_neg: ' + repr(100*running_loss_neg)[0:5] + ' running_loss_pos: ' + repr(100*running_loss_pos)[0:5])
+                    print('running_loss_neg: ' + repr(100 * running_loss_neg)[0:5] + ' running_loss_pos: ' + repr(
+                        100 * running_loss_pos)[0:5])
 
                 # val accuracy
                 net.eval()
@@ -460,8 +449,8 @@ def main():
                 Dist = np.power(EmbVal1 - EmbVal2, 2).sum(1)
                 ValError = FPR95Accuracy(Dist, ValSetLabels) * 100
 
-                # plt.hist(Dist[np.where(ValSetLabels==0)[0]], 10);
-                # plt.hist(Dist[np.where(ValSetLabels==1)[0]], 10);
+                # plt.hist(Dist[np.where(ValSetLabels==0)[0]], 10)
+                # plt.hist(Dist[np.where(ValSetLabels==1)[0]], 10)
 
                 del EmbVal1, EmbVal2
 
@@ -478,7 +467,7 @@ def main():
                 net = net.eval()
 
                 if (i % 2000 == 0) & (i > 0):
-                    #FPR95 = CurrentFPR95
+                    # FPR95 = CurrentFPR95
                     print('FPR95 changed: ' + repr(FPR95)[0:5])
 
                 # compute stats
@@ -487,7 +476,7 @@ def main():
                     if i >= len(my_training_DataLoader):
                         TestDecimation1 = 1
                     else:
-                        TestDecimation1 = TestDecimation;
+                        TestDecimation1 = TestDecimation
 
                     # test accuracy
                     NoSamples = 0
@@ -563,6 +552,7 @@ def main():
         torch.save(state, filepath)
 
     print('Finished Training')
+
 
 if __name__ == '__main__':
     main()
