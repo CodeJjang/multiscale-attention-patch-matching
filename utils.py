@@ -1,7 +1,26 @@
 from itertools import combinations
-
 import numpy as np
 import torch
+import GPUtil
+
+
+def get_torch_device():
+    device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
+    gpus_num = torch.cuda.device_count()
+    torch.cuda.empty_cache()
+    GPUtil.showUtilization()
+
+    print(f'Using: {device}')
+    if device.type != "cpu":
+        print(f'{gpus_num} GPUs available')
+
+    return device
+
+
+def NormalizeImages(x):
+    # Result = (x/255.0-0.5)/0.5
+    Result = x / (255.0 / 2)
+    return Result
 
 
 def pdist(vectors):
@@ -29,6 +48,7 @@ class AllPositivePairSelector(PairSelector):
     Discards embeddings and generates all possible pairs given labels.
     If balance is True, negative pairs are a random sample to match the number of positive samples
     """
+
     def __init__(self, balance=True):
         super(AllPositivePairSelector, self).__init__()
         self.balance = balance
@@ -115,7 +135,6 @@ class AllTripletSelector(TripletSelector):
         return torch.LongTensor(np.array(triplets))
 
 
-
 class HardNegativesTripletSelector(TripletSelector):
     """
     Returns all possible triplets
@@ -193,7 +212,8 @@ class FunctionNegativeTripletSelector(TripletSelector):
 
             ap_distances = distance_matrix[anchor_positives[:, 0], anchor_positives[:, 1]]
             for anchor_positive, ap_distance in zip(anchor_positives, ap_distances):
-                loss_values = ap_distance - distance_matrix[torch.LongTensor(np.array([anchor_positive[0]])), torch.LongTensor(negative_indices)] + self.margin
+                loss_values = ap_distance - distance_matrix[
+                    torch.LongTensor(np.array([anchor_positive[0]])), torch.LongTensor(negative_indices)] + self.margin
                 loss_values = loss_values.data.cpu().numpy()
                 hard_negative = self.negative_selection_fn(loss_values)
                 if hard_negative is not None:
@@ -209,15 +229,17 @@ class FunctionNegativeTripletSelector(TripletSelector):
 
 
 def HardestNegativeTripletSelector(margin, cpu=False): return FunctionNegativeTripletSelector(margin=margin,
-                                                                                 negative_selection_fn=hardest_negative,
-                                                                                 cpu=cpu)
+                                                                                              negative_selection_fn=hardest_negative,
+                                                                                              cpu=cpu)
 
 
 def RandomNegativeTripletSelector(margin, cpu=False): return FunctionNegativeTripletSelector(margin=margin,
-                                                                                negative_selection_fn=random_hard_negative,
-                                                                                cpu=cpu)
+                                                                                             negative_selection_fn=random_hard_negative,
+                                                                                             cpu=cpu)
 
 
 def SemihardNegativeTripletSelector(margin, cpu=False): return FunctionNegativeTripletSelector(margin=margin,
-                                                                                  negative_selection_fn=lambda x: semihard_negative(x, margin),
-                                                                                  cpu=cpu)
+                                                                                               negative_selection_fn=lambda
+                                                                                                   x: semihard_negative(
+                                                                                                   x, margin),
+                                                                                               cpu=cpu)

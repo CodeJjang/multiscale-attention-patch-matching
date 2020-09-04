@@ -11,50 +11,37 @@ from torch.utils import data
 import torch.optim as optim
 import torch.nn as nn
 from tqdm import tqdm
-import GPUtil
 from multiprocessing import Pool
 import argparse
 # my classes
 from my_classes import imshow, ShowRowImages, ShowTwoRowImages, EvaluateSofmaxNet, EvaluateDualNets
-from my_classes import DatasetPairwiseTriplets, FPR95Accuracy, separate_cnn_paras
-from my_classes import SingleNet, MetricLearningCnn, EvaluateNet, SiamesePairwiseSoftmax, NormalizeImages
+from my_classes import FPR95Accuracy, separate_cnn_paras
+from my_classes import SingleNet, MetricLearningCnn, EvaluateNet, SiamesePairwiseSoftmax
 from losses import ContrastiveLoss, TripletLoss, OnlineTripletLoss, OnlineHardNegativeMiningTripletLoss
 from losses import InnerProduct, FindFprTrainingSet, FPRLoss, PairwiseLoss, HardTrainingLoss
 
 from read_matlab_imdb import read_matlab_imdb
 from losses import Compute_FPR_HardNegatives, ComputeFPR
-
+from utils import get_torch_device
+from datasets import PairwiseTriplets
 import warnings
 
 warnings.filterwarnings("ignore", message="UserWarning: albumentations.augmentations.transforms.RandomResizedCrop")
 
-from multiprocessing import Process, freeze_support
-
 
 def parse_args():
-    parser = argparse.ArgumentParser(description='Match multimodal patches.')
+    parser = argparse.ArgumentParser(description='Train models for multimodal patch matching.')
     parser.add_argument('--models', help='models path')
     parser.add_argument('--logs', help='logs path')
     parser.add_argument('--test', help='test data path')
-    parser.add_argument('--train', help='train data path')
+    parser.add_argument('--trainval', help='trainval data path')
 
     return parser.parse_args()
 
 
 def main():
     args = parse_args()
-    freeze_support()
-
-    device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
-    gpus_num = torch.cuda.device_count()
-    torch.cuda.empty_cache()
-    GPUtil.showUtilization()
-
-    print(f'Using: {device}')
-    if device.type != "cpu":
-        print(f'{gpus_num} GPUs available')
-        name = torch.cuda.get_device_name(0)
-        pool = Pool(processes=1)
+    device = get_torch_device()
 
     ModelsDirName = args.models
     LogsDirName = args.logs
@@ -62,10 +49,8 @@ def main():
     BestFileName = 'visnir_best'
     FileName = 'visnir_sym_triplet'
     # TestDir = '/home/keller/Dropbox/multisensor/python/data/test/'
-    TestDir = args.test
     # TestDir = 'data\\Vis-Nir_grid\\test\\'
     # TrainFile = '/home/keller/Dropbox/multisensor/python/data/Vis-Nir_Train.mat'
-    TrainFile = args.train
     # TrainFile = './data/Vis-Nir_grid/Vis-Nir_grid_Train.hdf5'
     TestDecimation = 10
     FPR95 = 0.8
@@ -181,22 +166,20 @@ def main():
     ContinueMode = True
 
     # ----------------------------- read data----------------------------------------------
-    Data = read_matlab_imdb(TrainFile)
-    TrainingSetData = Data['Data']
-    TrainingSetLabels = np.squeeze(Data['Labels'])
-    TrainingSetSet = np.squeeze(Data['Set'])
+    trainval_imdb = read_matlab_imdb(args.trainval)
+    trainval_data = trainval_imdb['Data']
+    trainval_labels = np.squeeze(trainval_imdb['Labels'])
+    trainval_set = np.squeeze(trainval_imdb['Set'])
 
-    del Data
+    # ShowTwoImages(trainval_data[0:3, :, :, 0])
+    # ShowTwoRowImages(trainval_data[0:3, :, :, 0], trainval_data[0:3, :, :, 1])
 
-    # ShowTwoImages(TrainingSetData[0:3, :, :, 0])
-    # ShowTwoRowImages(TrainingSetData[0:3, :, :, 0], TrainingSetData[0:3, :, :, 1])
-
-    TrainIdx = np.squeeze(np.asarray(np.where(TrainingSetSet == 1)))
-    ValIdx = np.squeeze(np.asarray(np.where(TrainingSetSet == 3)))
+    train_indices = np.squeeze(np.asarray(np.where(trainval_set == 1)))
+    val_indices = np.squeeze(np.asarray(np.where(trainval_set == 3)))
 
     # get val data
-    ValSetLabels = torch.from_numpy(TrainingSetLabels[ValIdx])
-    ValSetData = TrainingSetData[ValIdx, :, :, :].astype(np.float32)
+    ValSetLabels = torch.from_numpy(trainval_labels[val_indices])
+    ValSetData = trainval_data[val_indices].astype(np.float32)
 
     # ShowTwoRowImages(np.squeeze(ValSetData[0:4, :, :, :, 0]), np.squeeze(ValSetData[0:4, :, :, :, 1]))
     # ValSetData = torch.from_numpy(ValSetData).float().cpu()
@@ -205,17 +188,17 @@ def main():
     ValSetData = torch.from_numpy(NormalizeImages(ValSetData))
 
     # train data
-    TrainingSetData = np.squeeze(TrainingSetData[TrainIdx,])
-    TrainingSetLabels = TrainingSetLabels[TrainIdx]
+    trainval_data = np.squeeze(trainval_data[train_indices,])
+    trainval_labels = trainval_labels[train_indices]
 
     # define generators
-    my_training_Dataset = DatasetPairwiseTriplets(TrainingSetData, TrainingSetLabels, InnerBatchSize, Augmentation,
+    training_dataset = DatasetPairwiseTriplets(trainval_data, trainval_labels, InnerBatchSize, Augmentation,
                                                   GeneratorMode)
-    my_training_DataLoader = data.DataLoader(my_training_Dataset, batch_size=OuterBatchSize, shuffle=True,
+    training_loader = data.DataLoader(training_dataset, batch_size=OuterBatchSize, shuffle=True,
                                              num_workers=8)
 
-    # Load all datasets
-    FileList = glob.glob(os.path.join(TestDir, "*.hdf5"))
+    # Load all test datasets
+    FileList = glob.glob(os.path.join(args.test, "*.hdf5"))
     TestData = dict()
     for File in FileList:
         path, DatasetName = os.path.split(File)
@@ -334,7 +317,7 @@ def main():
         running_loss_pos = 0
         running_loss_neg = 0
         optimizer.zero_grad()
-        for i, Data in enumerate(tqdm(my_training_DataLoader, 0)):
+        for i, Data in enumerate(tqdm(training_loader, 0)):
 
             net = net.train()
 
@@ -473,7 +456,7 @@ def main():
                 # compute stats
                 if (GeneratorMode == 'Pairwise') | (GeneratorMode == 'PairwiseRot'):
 
-                    if i >= len(my_training_DataLoader):
+                    if i >= len(training_loader):
                         TestDecimation1 = 1
                     else:
                         TestDecimation1 = TestDecimation
@@ -528,10 +511,10 @@ def main():
                 str += ' FPR95 = ' + repr(FPR95)[0:6] + ' Mean: ' + repr(TotalTestError)[0:6]
                 print(str)
 
-                writer.add_scalar('Val Error', ValError, epoch * len(my_training_DataLoader) + i)
-                writer.add_scalar('Test Error', TotalTestError, epoch * len(my_training_DataLoader) + i)
-                writer.add_scalar('Loss', 100 * running_loss, epoch * len(my_training_DataLoader) + i)
-                writer.add_scalar('FPR95', FPR95, epoch * len(my_training_DataLoader) + i)
+                writer.add_scalar('Val Error', ValError, epoch * len(training_loader) + i)
+                writer.add_scalar('Test Error', TotalTestError, epoch * len(training_loader) + i)
+                writer.add_scalar('Loss', 100 * running_loss, epoch * len(training_loader) + i)
+                writer.add_scalar('FPR95', FPR95, epoch * len(training_loader) + i)
                 writer.add_text('Text', str)
                 writer.close()
 
@@ -551,7 +534,7 @@ def main():
 
         torch.save(state, filepath)
 
-    print('Finished Training')
+    print('Finished training')
 
 
 if __name__ == '__main__':
