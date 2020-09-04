@@ -84,7 +84,7 @@ def FPR95Threshold(PosDist):
 
 
 
-def EvaluateNet(net,data,device,StepSize,Mode):
+def EvaluateNet(net,data,device,StepSize):
 
 
     with torch.no_grad():
@@ -99,13 +99,9 @@ def EvaluateNet(net,data,device,StepSize,Mode):
             a = net(a)
 
             if k==0:
-                keys = list(a.keys())
-                EmbA = dict()
-                for key in keys:
-                    EmbA[key] = np.zeros((data.shape[0], a[key].shape[1]),dtype=np.float32)
+                EmbA = np.zeros((data.shape[0], a.shape[1]),dtype=np.float32)
 
-            for key in keys:
-                EmbA[key][k:(k + StepSize)] = a[key].cpu()
+            EmbA[k:(k + StepSize)] = a.cpu()
 
     return EmbA
 

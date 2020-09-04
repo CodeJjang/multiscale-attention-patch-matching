@@ -13,7 +13,7 @@ import torch.nn as nn
 from tqdm import tqdm
 import GPUtil
 from multiprocessing import Pool
-
+import argparse
 # my classes
 from my_classes import imshow, ShowRowImages, ShowTwoRowImages, EvaluateSofmaxNet, EvaluateDualNets
 from my_classes import DatasetPairwiseTriplets, FPR95Accuracy,separate_cnn_paras
@@ -30,29 +30,40 @@ warnings.filterwarnings("ignore", message="UserWarning: albumentations.augmentat
 
 from multiprocessing import Process, freeze_support
 
-if __name__ == '__main__':
+def parse_args():
+    parser = argparse.ArgumentParser(description='Match multimodal patches.')
+    parser.add_argument('--models', help='models path')
+    parser.add_argument('--logs', help='logs path')
+    parser.add_argument('--test', help='test data path')
+    parser.add_argument('--train', help='train data path')
+
+    return parser.parse_args()
+
+def main():
+    args = parse_args()
     freeze_support()
 
     device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
-    NumGpus = torch.cuda.device_count()
+    gpus_num = torch.cuda.device_count()
     torch.cuda.empty_cache()
     GPUtil.showUtilization()
 
-    # Assuming that we are on a CUDA machine, this should print a CUDA device:
-    print(device)
-    name = torch.cuda.get_device_name(0)
-    pool = Pool(processes=1)
+    print(f'Using: {device}')
+    if device.type != "cpu":
+        print(f'{gpus_num} GPUs available')
+        name = torch.cuda.get_device_name(0)
+        pool = Pool(processes=1)
 
-    ModelsDirName = './models/'
-    LogsDirName = './logs/'
+    ModelsDirName = args.models
+    LogsDirName = args.logs
     Description = 'Symmetric CNN with Triplet loss, no HM'
     BestFileName = 'visnir_best'
     FileName = 'visnir_sym_triplet'
     # TestDir = '/home/keller/Dropbox/multisensor/python/data/test/'
-    TestDir = 'F:\\multisensor\\test\\'
+    TestDir = args.test
     # TestDir = 'data\\Vis-Nir_grid\\test\\'
     # TrainFile = '/home/keller/Dropbox/multisensor/python/data/Vis-Nir_Train.mat'
-    TrainFile = 'f:\\multisensor\\train\\Vis-Nir_Train.hdf5'
+    TrainFile = args.train
     # TrainFile = './data/Vis-Nir_grid/Vis-Nir_grid_Train.hdf5'
     TestDecimation = 10
     FPR95 = 0.8
@@ -78,7 +89,7 @@ if __name__ == '__main__':
     AssymetricInitializationPhase = False
     grad_accumulation_steps = 1
 
-    if False:
+    if True:
         # GeneratorMode = 'PairwiseRot'
         GeneratorMode = 'Pairwise'
         CnnMode = 'PairwiseSymmetric'
@@ -133,7 +144,7 @@ if __name__ == '__main__':
 
         StartBestModel = True
 
-    if True:
+    if False:
         # GeneratorMode      = 'PairwiseRot'
         GeneratorMode = 'Pairwise'
         # CnnMode            = 'HybridRot'
@@ -191,7 +202,7 @@ if __name__ == '__main__':
     # ValSetData = torch.from_numpy(ValSetData).float().cpu()
     ValSetData[:, :, :, :, 0] -= ValSetData[:, :, :, :, 0].mean()
     ValSetData[:, :, :, :, 1] -= ValSetData[:, :, :, :, 1].mean()
-    ValSetData = torch.from_numpy(NormalizeImages(ValSetData));
+    ValSetData = torch.from_numpy(NormalizeImages(ValSetData))
 
     # train data
     TrainingSetData = np.squeeze(TrainingSetData[TrainIdx,])
@@ -204,7 +215,7 @@ if __name__ == '__main__':
                                              num_workers=8)
 
     # Load all datasets
-    FileList = glob.glob(TestDir + "*.hdf5")
+    FileList = glob.glob(os.path.join(TestDir, "*.hdf5"))
     TestData = dict()
     for File in FileList:
         path, DatasetName = os.path.split(File)
@@ -401,8 +412,8 @@ if __name__ == '__main__':
                             pos1, pos2 = pos1.to(device), pos2.to(device)
 
 
-                            loss  = HardTrainingLoss(net, pos1, pos2,PosRatio=0.5,HardRatio=0.5,T=1,device=device)
-                            loss += HardTrainingLoss(net, pos2, pos1, PosRatio=0.5, HardRatio=0.5, T=1, device=device)
+                            #loss  = HardTrainingLoss(net, pos1, pos2,PosRatio=0.5,HardRatio=0.5,T=1,device=device)
+                            #loss += HardTrainingLoss(net, pos2, pos1, PosRatio=0.5, HardRatio=0.5, T=1, device=device)
 
                             #Embed = net(pos1, pos2, p=0.3)
                             #loss = criterion(Embed['Hybrid1'], Embed['Hybrid2']) + criterion(Embed['Hybrid2'],Embed['Hybrid1'])
@@ -552,3 +563,6 @@ if __name__ == '__main__':
         torch.save(state, filepath)
 
     print('Finished Training')
+
+if __name__ == '__main__':
+    main()
