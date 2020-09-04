@@ -4,7 +4,8 @@ import torch.nn.functional as F
 import numpy as np
 import matplotlib.pyplot as plt
 
-from my_classes import EvaluateDualNets,FPR95Threshold
+from my_classes import EvaluateDualNets, FPR95Threshold
+
 
 def sim_matrix(a, b, eps=1e-8):
     """
@@ -15,8 +16,6 @@ def sim_matrix(a, b, eps=1e-8):
     b_norm = b / torch.max(b_n, eps * torch.ones_like(b_n))
     sim_mt = torch.mm(a_norm, b_norm.transpose(0, 1))
     return sim_mt
-
-
 
 
 class ContrastiveLoss(nn.Module):
@@ -37,7 +36,6 @@ class ContrastiveLoss(nn.Module):
         return losses.mean() if size_average else losses.sum()
 
 
-
 class TripletLoss(nn.Module):
     """
     Triplet loss
@@ -49,14 +47,12 @@ class TripletLoss(nn.Module):
         self.margin = margin
 
     def forward(self, anchor, positive, negative):
-
         distance_positive = (anchor - positive).pow(2).sum(1)  # .pow(.5)
         distance_negative = (anchor - negative).pow(2).sum(1)  # .pow(.5)
 
         losses = F.relu(distance_positive - distance_negative + self.margin)
 
         return losses.mean()
-
 
 
 class PairwiseLoss(nn.Module):
@@ -71,16 +67,12 @@ class PairwiseLoss(nn.Module):
         self.Mode = 'FPR'
 
     def forward(self, Embed1, Embed2):
-
-        if (Embed1.nelement()==0) | (Embed2.nelement()==0):
+        if (Embed1.nelement() == 0) | (Embed2.nelement() == 0):
             return 0
 
         losses = (Embed1 - Embed2).pow(2).sum(1).pow(.5)
 
         return losses.mean()
-
-
-
 
 
 class OnlineContrastiveLoss(nn.Module):
@@ -109,9 +101,6 @@ class OnlineContrastiveLoss(nn.Module):
         return loss.mean()
 
 
-
-
-
 class OnlineTripletLoss(nn.Module):
     """
     Online Triplets loss
@@ -126,7 +115,6 @@ class OnlineTripletLoss(nn.Module):
         self.triplet_selector = triplet_selector
 
     def forward(self, embeddings, target):
-
         triplets = self.triplet_selector.get_triplets(embeddings, target)
 
         if embeddings.is_cuda:
@@ -139,23 +127,17 @@ class OnlineTripletLoss(nn.Module):
         return losses.mean(), len(triplets)
 
 
-
-
-
-
-def HardTrainingLoss(net, pos1, pos2,PosRatio,HardRatio,T,device):
-
+def HardTrainingLoss(net, pos1, pos2, PosRatio, HardRatio, T, device):
     net.eval()
     with torch.no_grad():
         emb1, emb2 = EvaluateDualNets(net, pos1, pos2, device, StepSize=400)
 
         # Dist  = sim_matrix(emb1,emb2).cpu().detach()
         Similarity = torch.mm(emb1, emb2.transpose(0, 1)).cpu()
-        Similarity -= 1000000000 * torch.eye(n =Similarity.shape[0],m= Similarity.shape[1])
+        Similarity -= 1000000000 * torch.eye(n=Similarity.shape[0], m=Similarity.shape[1])
         NegIdx = torch.argmax(Similarity, axis=1).detach().cpu()
 
-
-        #compute distances
+        # compute distances
         ap_distances = (emb1 - emb2).pow(2).sum(1)  # .pow(.5)
         an_distances = (emb1 - emb2[NegIdx, :]).pow(2).sum(1)
 
@@ -163,7 +145,7 @@ def HardTrainingLoss(net, pos1, pos2,PosRatio,HardRatio,T,device):
         PosIdx = ap_distances.argsort(dim=-1, descending=True).cpu()
         PosIdx = PosIdx[0:int(PosRatio * PosIdx.shape[0])]
 
-        #update NegIdx
+        # update NegIdx
         NegIdx = NegIdx[PosIdx]
 
         margin = ap_distances[PosIdx] - an_distances[PosIdx]
@@ -177,27 +159,24 @@ def HardTrainingLoss(net, pos1, pos2,PosRatio,HardRatio,T,device):
         PosIdx = PosIdx[Idx]
         NegIdx = NegIdx[Idx]
 
-        AdditionalNegIdx = np.setdiff1d(NegIdx,PosIdx)
-        NegIdx = np.concatenate((PosIdx,AdditionalNegIdx),0)
+        AdditionalNegIdx = np.setdiff1d(NegIdx, PosIdx)
+        NegIdx = np.concatenate((PosIdx, AdditionalNegIdx), 0)
 
         del emb1, emb2
 
         pos1 = pos1[PosIdx]
         pos2 = pos2[NegIdx]
 
-
-
-    #compute margin
+    # compute margin
     net.train()
     pos1, pos2 = pos1.to(device), pos2.to(device)
     Embed = net(pos1, pos2)
 
     if net.module.Mode == 'Hybrid':
-        emb1 =  Embed['Hybrid1']
-        emb2 =  Embed['Hybrid2']
+        emb1 = Embed['Hybrid1']
+        emb2 = Embed['Hybrid2']
 
-        del Embed['EmbSym1'],Embed['EmbSym2'],Embed['EmbAsym1'],Embed['EmbAsym2']
-
+        del Embed['EmbSym1'], Embed['EmbSym2'], Embed['EmbAsym1'], Embed['EmbAsym2']
 
     # Dist  = sim_matrix(emb1,emb2).cpu().detach()
     with torch.no_grad():
@@ -216,10 +195,6 @@ def HardTrainingLoss(net, pos1, pos2,PosRatio,HardRatio,T,device):
     return losses
 
 
-
-
-
-
 class OnlineHardNegativeMiningTripletLoss(nn.Module):
     """
     Online Triplets loss
@@ -228,18 +203,16 @@ class OnlineHardNegativeMiningTripletLoss(nn.Module):
     triplets
     """
 
-    def __init__(self, margin,Mode,HardRatio=1,PosRatio=1,NegPow=1,PosPow=1):
+    def __init__(self, margin, Mode, HardRatio=1, PosRatio=1, NegPow=1, PosPow=1):
         super(OnlineHardNegativeMiningTripletLoss, self).__init__()
-        self.margin    = margin
-        self.Mode      = Mode
+        self.margin = margin
+        self.Mode = Mode
         self.HardRatio = HardRatio
-        self.PosRatio  = PosRatio
-        self.PosPow    = PosPow
-        self.NegPow    = NegPow
-
+        self.PosRatio = PosRatio
+        self.PosPow = PosPow
+        self.NegPow = NegPow
 
     def forward(self, emb1, emb2):
-
 
         if self.Mode == 'Random':
             NegIdx = np.random.randint(emb1.shape[0], size=emb1.shape[0])
@@ -247,36 +220,27 @@ class OnlineHardNegativeMiningTripletLoss(nn.Module):
             an_distances = (emb1 - emb2[NegIdx, :]).pow(2).sum(1)  # .pow(.5)
             margin = ap_distances - an_distances
 
-
-        if (self.Mode == 'Hardest')  | (self.Mode == 'HardPos'):
-            #Dist  = sim_matrix(emb1,emb2).cpu().detach()
+        if (self.Mode == 'Hardest') | (self.Mode == 'HardPos'):
+            # Dist  = sim_matrix(emb1,emb2).cpu().detach()
             Similarity = torch.mm(emb1, emb2.transpose(0, 1)).cpu()
-            Similarity -= 1000000000*torch.eye(n=Similarity.shape[0],m=Similarity.shape[1])
+            Similarity -= 1000000000 * torch.eye(n=Similarity.shape[0], m=Similarity.shape[1])
             NegIdx = torch.argmax(Similarity, axis=1).detach()
 
-
-
-
-        if (self.Mode == 'Hardest') :
-
-            ap_distances = (emb1 - emb2[0:emb1.shape[0],:]).pow(2).sum(1)  # .pow(.5)
-            an_distances = (emb1 - emb2[NegIdx,:]).pow(2).sum(1)
+        if (self.Mode == 'Hardest'):
+            ap_distances = (emb1 - emb2[0:emb1.shape[0], :]).pow(2).sum(1)  # .pow(.5)
+            an_distances = (emb1 - emb2[NegIdx, :]).pow(2).sum(1)
 
             margin = ap_distances - an_distances
 
-
-
-
         if (self.Mode == 'HardPos'):
-
-            ap_distances = (emb1 - emb2[0:emb1.shape[0],:,]).pow(2).sum(1)  # .pow(.5)
+            ap_distances = (emb1 - emb2[0:emb1.shape[0], :, ]).pow(2).sum(1)  # .pow(.5)
             an_distances = (emb1 - emb2[NegIdx, :]).pow(2).sum(1)
 
-            #get LARGEST positive distances
+            # get LARGEST positive distances
             PosIdx = ap_distances.argsort(dim=-1, descending=True)
             PosIdx = PosIdx[0:int(self.PosRatio * PosIdx.shape[0])]
 
-            NegIdx=NegIdx[PosIdx]
+            NegIdx = NegIdx[PosIdx]
 
             margin = ap_distances[PosIdx] - an_distances[PosIdx]
 
@@ -291,13 +255,10 @@ class OnlineHardNegativeMiningTripletLoss(nn.Module):
 
             margin = margin[Idx]
 
-        #losses = F.relu(margin + self.margin).mean()
+        # losses = F.relu(margin + self.margin).mean()
         margin = margin[torch.where(margin + self.margin > 0)[0]]
         losses = (margin + self.margin).mean()
         return losses
-
-
-
 
 
 class InnerProduct(nn.Module):
@@ -306,45 +267,35 @@ class InnerProduct(nn.Module):
         super(InnerProduct, self).__init__()
 
     def forward(self, emb1, emb2):
-
-        Loss = (emb1*emb2).abs().sum(1)
+        Loss = (emb1 * emb2).abs().sum(1)
         return Loss.mean()
 
 
-
-
-
-
-
-
-
-def FindFprTrainingSet(emb1, emb2,FprValPos,FprValNeg,MaxImgNo=0):
-
+def FindFprTrainingSet(emb1, emb2, FprValPos, FprValNeg, MaxImgNo=0):
     with torch.no_grad():
 
         # Dist  = sim_matrix(emb1,emb2).cpu().detach()
         Similarity = torch.mm(emb1, emb2.transpose(0, 1))
-        Similarity -= 1000000000 * torch.eye(n =Similarity.shape[0],m= Similarity.shape[1])
+        Similarity -= 1000000000 * torch.eye(n=Similarity.shape[0], m=Similarity.shape[1])
         NegIdx = torch.argmax(Similarity, axis=1)
 
-
-        #compute DISTANCES
+        # compute DISTANCES
         ap_distances = (emb1 - emb2).pow(2).sum(1)  # .pow(.5)
         an_distances = (emb1 - emb2[NegIdx, :]).pow(2).sum(1)
 
         FPR95 = FPR95Threshold(ap_distances)
-        #FprValPos = FPR95
-        #FprValNeg = FPR95
+        # FprValPos = FPR95
+        # FprValNeg = FPR95
 
-        #plt.hist(ap_distances, 10);
-        #plt.hist(an_distances, 10);
+        # plt.hist(ap_distances, 10);
+        # plt.hist(an_distances, 10);
 
         # get positive distances ABOVE fpr
         PosIdx = torch.squeeze(torch.where(ap_distances > FprValPos)[0])
-        #plt.hist(ap_distances, 10);
-        #plt.hist(an_distances, 10);
+        # plt.hist(ap_distances, 10);
+        # plt.hist(an_distances, 10);
 
-        #sort array: LARGEST distances first
+        # sort array: LARGEST distances first
         PosIdx = PosIdx[ap_distances[PosIdx].argsort(dim=-1, descending=True)]
 
         # get negative distances BELOW fpr
@@ -355,13 +306,10 @@ def FindFprTrainingSet(emb1, emb2,FprValPos,FprValNeg,MaxImgNo=0):
 
         NegIdx2 = NegIdx[NegIdx1]
 
-
         Result = dict()
-        Result['PosIdx']   = PosIdx
+        Result['PosIdx'] = PosIdx
         Result['NegIdxA1'] = NegIdx1
         Result['NegIdxA2'] = NegIdx2
-
-
 
         NegIdx = torch.argmax(Similarity, axis=0)
         an_distances = (emb1[NegIdx, :] - emb2).pow(2).sum(1)
@@ -376,28 +324,16 @@ def FindFprTrainingSet(emb1, emb2,FprValPos,FprValNeg,MaxImgNo=0):
     return Result
 
 
-
-
-
-
-
-
-
-
-
-
 class FPRLoss(nn.Module):
     """
     Triplet loss
     Takes embeddings of an anchor sample, a positive sample and a negative sample
     """
 
-    def __init__(self,):
+    def __init__(self, ):
         super(FPRLoss, self).__init__()
 
-
     def forward(self, anchor, positive, negative):
-
         distance_positive = (anchor - positive).pow(2).sum(1)  # .pow(.5)
         distance_negative = (anchor - negative).pow(2).sum(1)  # .pow(.5)
 
@@ -406,22 +342,14 @@ class FPRLoss(nn.Module):
         return losses
 
 
-
-
-def Compute_FPR_HardNegatives(net, pos1, pos2, device,FprValPos,FprValNeg,MaxNoImages):
-
+def Compute_FPR_HardNegatives(net, pos1, pos2, device, FprValPos, FprValNeg, MaxNoImages):
     with torch.no_grad():
-        Embed = EvaluateDualNets(net, pos1, pos2, device, StepSize=400)
+        embeddings = EvaluateDualNets(net, pos1, pos2, device, StepSize=400)
+        Idx = FindFprTrainingSet(torch.from_numpy(embeddings['Emb1']), torch.from_numpy(embeddings['Emb2']), FprValPos,
+                                 FprValNeg)
 
-    # GPUtil.showUtilization()
-
-
-    with torch.no_grad():
-        Idx = FindFprTrainingSet( torch.from_numpy(Embed['Emb1']),  torch.from_numpy(Embed['Emb2']), FprValPos, FprValNeg)
-    del Embed
-
-    #print('PosIdx: ' + repr(Idx['PosIdx'].shape[0]) + ' NegIdxA1: ' + repr(
-     #   Idx['NegIdxA1'].shape[0]) + ' NegIdxB1: ' + repr(Idx['NegIdxB1'].shape[0]))
+    # print('PosIdx: ' + repr(Idx['PosIdx'].shape[0]) + ' NegIdxA1: ' + repr(
+    #   Idx['NegIdxA1'].shape[0]) + ' NegIdxB1: ' + repr(Idx['NegIdxB1'].shape[0]))
 
     while (Idx['PosIdx'].nelement() + Idx['NegIdxA1'].nelement() + Idx['NegIdxB1'].nelement()) > MaxNoImages:
         # print('Memory error #1. #Images: ' + repr(Idx['PosIdx'].shape[0] + Idx['NegIdxA1'].shape[0] + Idx['NegIdxB1'].shape[0]))
@@ -451,29 +379,20 @@ def Compute_FPR_HardNegatives(net, pos1, pos2, device,FprValPos,FprValNeg,MaxNoI
     return Result
 
 
-
-
-
-
-
-
-def ComputeFPR(emb1, emb2,FprValPos,FprValNeg):
-
+def ComputeFPR(emb1, emb2, FprValPos, FprValNeg):
     with torch.no_grad():
-
         # Dist  = sim_matrix(emb1,emb2).cpu().detach()
         Similarity = torch.mm(emb1, emb2.transpose(0, 1)).cpu()
-        Similarity -= 1000000000 * torch.eye(n =Similarity.shape[0],m= Similarity.shape[1])
+        Similarity -= 1000000000 * torch.eye(n=Similarity.shape[0], m=Similarity.shape[1])
         NegIdx = torch.argmax(Similarity, axis=1)
 
-
-        #compute DISTANCES
+        # compute DISTANCES
         ap_distances = (emb1 - emb2).pow(2).sum(1)  # .pow(.5)
         an_distances = (emb1 - emb2[NegIdx, :]).pow(2).sum(1)
 
         # get negative distances BELOW fpr
         NegIdx1 = torch.where(an_distances < FprValNeg)[0]
 
-        Result = NegIdx1.shape[0]/an_distances.shape[0]
+        Result = NegIdx1.shape[0] / an_distances.shape[0]
 
     return Result
