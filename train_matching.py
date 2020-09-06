@@ -100,7 +100,7 @@ def evaluate_test(net, test_loaders, device, cnn_mode, test_decimation, generato
 def train(training_loader, val_data, val_labels, test_loaders, net, optimizer, criterion, scheduler, device,
           start_epoch, grad_accumulation_steps, generator_mode, cnn_mode, FPR95, fpr_hard_negatives, fpr_max_images_num,
           batch_size, pairwise_triplets_batch_size, tb_writer, test_decimation, models_dir_name, best_file_name,
-          out_fname, architecture_description, evaluate_every, lowest_test_error):
+          out_fname, architecture_description, evaluate_every, lowest_error, skip_validation, skip_test):
     for epoch in range(start_epoch, 80):
         running_loss = 0
         running_loss_ce = 0
@@ -212,10 +212,14 @@ def train(training_loader, val_data, val_labels, test_loaders, net, optimizer, c
                     print('running_loss_neg: ' + repr(100 * running_loss_neg)[0:5] + ' running_loss_pos: ' + repr(
                         100 * running_loss_pos)[0:5])
 
-                curr_FPR95, val_error = evaluate_validation(net, val_data, val_labels, device, batch_size, cnn_mode)
+                print_val_fpr = ''
+                if not skip_validation:
+                    curr_FPR95, val_error = evaluate_validation(net, val_data, val_labels, device, batch_size, cnn_mode)
+                    print_val_fpr = 'FPR95: ' + repr(curr_FPR95)
 
+                loss = running_loss / batch_num
                 if batch_num > 0:
-                    print('FPR95: ' + repr(curr_FPR95) + ' Loss= ' + repr(running_loss / batch_num))
+                    print(print_val_fpr + ' Loss= ' + repr(loss))
 
                 if (net.module.Mode == 'Hybrid1') | (net.module.Mode == 'Hybrid2'):
                     net.module.Mode = 'Hybrid'
@@ -229,41 +233,49 @@ def train(training_loader, val_data, val_labels, test_loaders, net, optimizer, c
                 else:
                     test_decimation = test_decimation
 
-                test_error = evaluate_test(net, test_loaders, device, cnn_mode, test_decimation, generator_mode)
-                if not test_error:
-                    raise Exception('Test error after evaluation test is None')
+                if not skip_test:
+                    test_error = evaluate_test(net, test_loaders, device, cnn_mode, test_decimation, generator_mode)
+                    if not test_error:
+                        raise Exception('Test error after evaluation test is None')
 
-                if test_error < lowest_test_error:
-                    lowest_test_error = test_error
+                    if test_error < lowest_error:
+                        lowest_error = test_error
 
-                    print('Best error found and saved: ' + repr(lowest_test_error)[0:5])
-                    filepath = os.path.join(models_dir_name, best_file_name + '.pth')
-                    state = {'epoch': epoch,
-                             'state_dict': net.module.state_dict(),
-                             'optimizer': optimizer.state_dict(),
-                             'Description': architecture_description,
-                             'LowestError': lowest_test_error,
-                             'OuterBatchSize': batch_size,
-                             'InnerBatchSize': pairwise_triplets_batch_size,
-                             'Mode': net.module.Mode,
-                             'CnnMode': cnn_mode,
-                             'GeneratorMode': generator_mode,
-                             'Loss': criterion.Mode,
-                             'FPR95': FPR95}
-                    torch.save(state, filepath)
+                        print(f'Best test error found and saved: {repr(lowest_error)[0:5]}')
+                        filepath = os.path.join(models_dir_name, best_file_name + '.pth')
+                        state = {'epoch': epoch,
+                                 'state_dict': net.module.state_dict(),
+                                 'optimizer': optimizer.state_dict(),
+                                 'Description': architecture_description,
+                                 'LowestError': lowest_error,
+                                 'OuterBatchSize': batch_size,
+                                 'InnerBatchSize': pairwise_triplets_batch_size,
+                                 'Mode': net.module.Mode,
+                                 'CnnMode': cnn_mode,
+                                 'GeneratorMode': generator_mode,
+                                 'Loss': criterion.Mode,
+                                 'FPR95': FPR95}
+                        torch.save(state, filepath)
 
-                str = '[%d, %5d] loss: %.3f' % (epoch, batch_num, 100 * running_loss) + ' Val Error: ' + repr(
-                    val_error)[0:6]
+                val_err_str = ''
+                if not skip_validation:
+                    val_err_str = ' Val Error: ' + repr(val_error)[0:6]
+                str = '[%d, %5d] loss: %.3f' % (epoch, batch_num, 100 * running_loss) + val_err_str
                 if running_loss_ce > 0:
                     str += ' Rot loss: ' + repr(running_loss_ce)[0:6]
 
                 # for dataset in test_loaders:
                 #   str +=' ' + dataset + ': ' + repr(test_loaders[dataset]['TestError'])[0:6]
-                str += ' FPR95 = ' + repr(FPR95)[0:6] + ' Mean: ' + repr(test_error)[0:6]
+                test_err_str = ''
+                if not skip_test:
+                    test_err_str = ' Mean Test Error: ' + repr(test_error)[0:6]
+                str += ' FPR95 = ' + repr(FPR95)[0:6] + test_err_str
                 print(str)
 
-                tb_writer.add_scalar('Val Error', val_error, epoch * len(training_loader) + batch_num)
-                tb_writer.add_scalar('Test Error', test_error, epoch * len(training_loader) + batch_num)
+                if not skip_validation:
+                    tb_writer.add_scalar('Val Error', val_error, epoch * len(training_loader) + batch_num)
+                if not test_error:
+                    tb_writer.add_scalar('Test Error', test_error, epoch * len(training_loader) + batch_num)
                 tb_writer.add_scalar('Loss', 100 * running_loss, epoch * len(training_loader) + batch_num)
                 tb_writer.add_scalar('FPR95', FPR95, epoch * len(training_loader) + batch_num)
                 tb_writer.add_text('Text', str)
@@ -295,6 +307,12 @@ def parse_args():
     parser.add_argument('--test', help='test data path')
     parser.add_argument('--trainval', help='trainval data path')
     parser.add_argument('--evaluate-every', type=int, default=1000, help='evaluate network and print steps')
+    parser.add_argument('--skip-validation', type=bool, default=False, help='whether to skip validation evaluation')
+    parser.add_argument('--skip-test', type=bool, default=False, help='whether to skip test evaluation')
+    parser.add_argument('--continue-from-checkpoint', type=bool, default=True,
+                        help='whether to continue training from checkpoint')
+    parser.add_argument('--continue-from-best-model', type=bool, default=True,
+                        help='whether to continue training using best model')
 
     return parser.parse_args()
 
@@ -302,7 +320,6 @@ def parse_args():
 def main():
     args = parse_args()
     device = get_torch_device()
-
     models_dir_name = args.models
     LogsDirName = args.logs
     architecture_description = 'Symmetric CNN with Triplet loss, no HM'
@@ -318,7 +335,7 @@ def main():
     fpr_hard_negatives = False
 
     tb_writer = SummaryWriter(LogsDirName)
-    lowest_test_error = 1e10
+    lowest_error = 1e10
 
     # ----------------------------     configuration   ---------------------------
     Augmentation = {}
@@ -334,6 +351,9 @@ def main():
 
     AssymetricInitializationPhase = False
     grad_accumulation_steps = 1
+
+    if args.skip_validation and args.skip_test:
+        raise Exception('Cannot skip both validation and test')
 
     if True:
         # generator_mode = 'PairwiseRot'
@@ -360,7 +380,7 @@ def main():
 
         fpr_hard_negatives = False
 
-        StartBestModel = True
+        StartBestModel = args.continue_from_checkpoint
 
     if False:
         generator_mode = 'Pairwise'
@@ -370,7 +390,6 @@ def main():
         # criterion = OnlineHardNegativeMiningTripletLoss(margin=1, Mode='HardPos', HardRatio=1.0/2, PosRatio=1. / 2)
 
         InitializeOptimizer = True
-        StartBestModel = False
 
         FreezeSymmetricCnn = True
         FreezeAsymmetricCnn = False
@@ -388,7 +407,7 @@ def main():
         AssymetricInitializationPhase = True
         architecture_description = 'PairwiseAsymmetric'
 
-        StartBestModel = True
+        StartBestModel = args.continue_from_checkpoint
 
     if False:
         # generator_mode      = 'PairwiseRot'
@@ -405,7 +424,7 @@ def main():
         LearningRate = 1e-2
 
         fpr_hard_negatives = False
-        StartBestModel = True
+        StartBestModel = args.continue_from_checkpoint
 
         FreezeSymmetricCnn = True
         FreezeAsymmetricCnn = False
@@ -423,7 +442,7 @@ def main():
 
         test_decimation = 20
 
-    ContinueMode = True
+    ContinueMode = args.continue_from_checkpoint
 
     # ----------------------------- read data----------------------------------------------
     trainval_imdb = read_matlab_imdb(args.trainval)
@@ -491,11 +510,11 @@ def main():
         model_checkpoints = glob.glob(os.path.join(models_dir_name, "visnir_best.pth"))
         if model_checkpoints:
             checkpoint = torch.load(model_checkpoints[-1])
-            lowest_test_error = checkpoint['LowestError']
-            print('lowest_test_error: ' + repr(lowest_test_error))
-            lowest_test_error = 1e10
+            lowest_error = checkpoint['LowestError']
+            print('lowest_error: ' + repr(lowest_error))
+            lowest_error = 1e10
         else:
-            lowest_test_error = 1e10
+            lowest_error = 1e10
 
     if torch.cuda.device_count() > 1:
         print("Let's use", torch.cuda.device_count(), "GPUs!")
@@ -543,7 +562,8 @@ def main():
     train(training_loader, val_data, val_labels, test_loaders, net, optimizer, criterion, scheduler, device,
           start_epoch, grad_accumulation_steps, generator_mode, cnn_mode, FPR95, fpr_hard_negatives, fpr_max_images_num,
           batch_size, pairwise_triplets_batch_size, tb_writer, test_decimation, models_dir_name, best_file_name,
-          out_fname, architecture_description, args.evaluate_every, lowest_test_error)
+          out_fname, architecture_description, args.evaluate_every, lowest_error, args.skip_validation,
+          args.skip_test)
 
 
 if __name__ == '__main__':
