@@ -1,7 +1,7 @@
 import torch
 import torch.nn as nn
-from spp_layer import spatial_pyramid_pool
-from layers import L2Norm
+from layers.spp_layer import spatial_pyramid_pool
+from layers.L2Norm import L2Norm
 
 
 class ConvNet(nn.Module):

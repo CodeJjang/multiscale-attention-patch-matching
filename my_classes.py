@@ -40,20 +40,21 @@ def ComputeAllErros(TestData, net, device, StepSize):
     Errors['Mean'] /= len(TestData)
 
 
-def FPR95Accuracy(Dist, Labels):
-    PosIdx = np.squeeze(np.asarray(np.where(Labels == 1)))
-    NegIdx = np.squeeze(np.asarray(np.where(Labels == 0)))
+def FPR95Accuracy(dist, labels):
+    positive_indices = np.squeeze(np.asarray(np.where(labels == 1)))
+    negative_indices = np.squeeze(np.asarray(np.where(labels == 0)))
 
-    NegDist = Dist[NegIdx]
-    PosDist = np.sort(Dist[PosIdx])
+    negative_dist = dist[negative_indices]
+    positive_dist = np.sort(dist[positive_indices])
 
-    Val = PosDist[int(0.95 * PosDist.shape[0])]
+    recall_thresh = positive_dist[int(0.95 * positive_dist.shape[0])]
 
-    FalsePos = sum(NegDist < Val);
+    fp = sum(negative_dist < recall_thresh)
 
-    FPR95Accuracy = FalsePos / float(NegDist.shape[0])
-
-    return FPR95Accuracy
+    negatives = float(negative_dist.shape[0])
+    if negatives == 0:
+        return 0
+    return fp / negatives
 
 
 def FPR95Threshold(PosDist):

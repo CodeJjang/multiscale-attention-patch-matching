@@ -7,13 +7,14 @@ import os
 import copy
 from tensorboardX import SummaryWriter
 from torch.optim.lr_scheduler import ReduceLROnPlateau
-from torch.utils import data
+from torch.utils.data import DataLoader
 import torch.optim as optim
 import torch.nn as nn
 from tqdm import tqdm
 from multiprocessing import Pool
 import argparse
 # my classes
+from datasets.HDF5Dataset import HDF5Dataset
 from my_classes import imshow, ShowRowImages, ShowTwoRowImages, EvaluateSofmaxNet, EvaluateDualNets
 from my_classes import FPR95Accuracy, separate_cnn_paras
 from my_classes import SingleNet, MetricLearningCnn, EvaluateNet, SiamesePairwiseSoftmax
@@ -23,303 +24,92 @@ from losses import InnerProduct, FindFprTrainingSet, FPRLoss, PairwiseLoss, Hard
 from read_matlab_imdb import read_matlab_imdb
 from losses import Compute_FPR_HardNegatives, ComputeFPR
 from utils import get_torch_device
-from datasets import PairwiseTriplets
+from datasets.PairwiseTriplets import PairwiseTriplets
 import warnings
+from utils import NormalizeImages
 
 warnings.filterwarnings("ignore", message="UserWarning: albumentations.augmentations.transforms.RandomResizedCrop")
 
 
-def parse_args():
-    parser = argparse.ArgumentParser(description='Train models for multimodal patch matching.')
-    parser.add_argument('--models', help='models path')
-    parser.add_argument('--logs', help='logs path')
-    parser.add_argument('--test', help='test data path')
-    parser.add_argument('--trainval', help='trainval data path')
-
-    return parser.parse_args()
-
-
-def main():
-    args = parse_args()
-    device = get_torch_device()
-
-    ModelsDirName = args.models
-    LogsDirName = args.logs
-    Description = 'Symmetric CNN with Triplet loss, no HM'
-    BestFileName = 'visnir_best'
-    FileName = 'visnir_sym_triplet'
-    # TestDir = '/home/keller/Dropbox/multisensor/python/data/test/'
-    # TestDir = 'data\\Vis-Nir_grid\\test\\'
-    # TrainFile = '/home/keller/Dropbox/multisensor/python/data/Vis-Nir_Train.mat'
-    # TrainFile = './data/Vis-Nir_grid/Vis-Nir_grid_Train.hdf5'
-    TestDecimation = 10
-    FPR95 = 0.8
-    MaxNoImages = 400
-    FprHardNegatives = False
-
-    writer = SummaryWriter(LogsDirName)
-    LowestError = 1e10
-
-    # ----------------------------     configuration   ---------------------------
-    Augmentation = {}
-    Augmentation["HorizontalFlip"] = False
-    Augmentation["VerticalFlip"] = False
-    Augmentation["Rotate90"] = True
-    Augmentation["Test"] = {'Do': True}
-    Augmentation["RandomCrop"] = {'Do': False, 'MinDx': 0, 'MaxDx': 0.2, 'MinDy': 0, 'MaxDy': 0.2}
-
-    # default values
-    FreezeSymmetricCnn = True
-    FreezeAsymmetricCnn = True
-
-    AssymetricInitializationPhase = False
-    grad_accumulation_steps = 1
-
-    if True:
-        # GeneratorMode = 'PairwiseRot'
-        GeneratorMode = 'Pairwise'
-        CnnMode = 'PairwiseSymmetric'
-        # criterion = OnlineHardNegativeMiningTripletLoss(margin=1, Mode='Random')
-        criterion = OnlineHardNegativeMiningTripletLoss(margin=1, Mode='Hardest')
-        # criterion         = OnlineHardNegativeMiningTripletLoss(margin=1, Mode='MostHardest', HardRatio=1.0/8)
-        Description = 'PairwiseSymmetric Hardest'
-
-        InitializeOptimizer = True
-        LearningRate = 1e-4
-        OuterBatchSize = 24
-        InnerBatchSize = 6
-        Augmentation["Test"] = {'Do': False}
-        Augmentation["HorizontalFlip"] = True
-        Augmentation["VerticalFlip"] = True
-        Augmentation["Rotate90"] = True
-        Augmentation["RandomCrop"] = {'Do': True, 'MinDx': 0, 'MaxDx': 0.2, 'MinDy': 0, 'MaxDy': 0.2}
-        grad_accumulation_steps = 1
-
-        FreezeSymmetricCnn = False
-        FreezeAsymmetricCnn = True
-
-        FprHardNegatives = False
-
-        StartBestModel = True
-
-    if False:
-        GeneratorMode = 'Pairwise'
-        CnnMode = 'PairwiseAsymmetric'
-        # criterion     = OnlineHardNegativeMiningTripletLoss(margin=1, Mode='Random')
-        criterion = OnlineHardNegativeMiningTripletLoss(margin=1, Mode='Hardest')
-        # criterion = OnlineHardNegativeMiningTripletLoss(margin=1, Mode='HardPos', HardRatio=1.0/2, PosRatio=1. / 2)
-
-        InitializeOptimizer = True
-        StartBestModel = False
-
-        FreezeSymmetricCnn = True
-        FreezeAsymmetricCnn = False
-
-        LearningRate = 1e-4
-        OuterBatchSize = 24
-        InnerBatchSize = 6
-
-        Augmentation["Test"] = {'Do': False}
-        Augmentation["HorizontalFlip"] = True
-        Augmentation["VerticalFlip"] = True
-        Augmentation["Rotate90"] = True
-        Augmentation["RandomCrop"] = {'Do': True, 'MinDx': 0, 'MaxDx': 0.2, 'MinDy': 0, 'MaxDy': 0.2}
-
-        AssymetricInitializationPhase = True
-        Description = 'PairwiseAsymmetric'
-
-        StartBestModel = True
-
-    if False:
-        # GeneratorMode      = 'PairwiseRot'
-        GeneratorMode = 'Pairwise'
-        # CnnMode            = 'HybridRot'
-        CnnMode = 'Hybrid'
-        # criterion           = OnlineHardNegativeMiningTripletLoss(margin=1, Mode='Random')
-        # criterion           = OnlineHardNegativeMiningTripletLoss(margin=1, Mode='Hardest')
-        criterion = OnlineHardNegativeMiningTripletLoss(margin=1, Mode='HardPos', HardRatio=1.0 / 2, PosRatio=1. / 2)
-        # HardestCriterion = OnlineHardNegativeMiningTripletLoss(margin=1, Mode='Hardest')
-        InitializeOptimizer = True
-        OuterBatchSize = 16  # 24
-        InnerBatchSize = 4 * 12  # 24
-        LearningRate = 1e-2
-
-        FprHardNegatives = False
-        StartBestModel = True
-
-        FreezeSymmetricCnn = True
-        FreezeAsymmetricCnn = False
-
-        AssymetricInitializationPhase = False
-
-        Augmentation["Test"] = {'Do': False}
-        Augmentation["HorizontalFlip"] = True
-        Augmentation["VerticalFlip"] = True
-        Augmentation["Rotate90"] = True
-        Augmentation["RandomCrop"] = {'Do': True, 'MinDx': 0, 'MaxDx': 0.2, 'MinDy': 0, 'MaxDy': 0.2}
-        grad_accumulation_steps = 1
-
-        MaxNoImages = 400
-
-        TestDecimation = 20
-
-    ContinueMode = True
-
-    # ----------------------------- read data----------------------------------------------
-    trainval_imdb = read_matlab_imdb(args.trainval)
-    trainval_data = trainval_imdb['Data']
-    trainval_labels = np.squeeze(trainval_imdb['Labels'])
-    trainval_set = np.squeeze(trainval_imdb['Set'])
-
-    # ShowTwoImages(trainval_data[0:3, :, :, 0])
-    # ShowTwoRowImages(trainval_data[0:3, :, :, 0], trainval_data[0:3, :, :, 1])
-
-    train_indices = np.squeeze(np.asarray(np.where(trainval_set == 1)))
-    val_indices = np.squeeze(np.asarray(np.where(trainval_set == 3)))
-
-    # get val data
-    ValSetLabels = torch.from_numpy(trainval_labels[val_indices])
-    ValSetData = trainval_data[val_indices].astype(np.float32)
-
-    # ShowTwoRowImages(np.squeeze(ValSetData[0:4, :, :, :, 0]), np.squeeze(ValSetData[0:4, :, :, :, 1]))
-    # ValSetData = torch.from_numpy(ValSetData).float().cpu()
-    ValSetData[:, :, :, :, 0] -= ValSetData[:, :, :, :, 0].mean()
-    ValSetData[:, :, :, :, 1] -= ValSetData[:, :, :, :, 1].mean()
-    ValSetData = torch.from_numpy(NormalizeImages(ValSetData))
-
-    # train data
-    trainval_data = np.squeeze(trainval_data[train_indices,])
-    trainval_labels = trainval_labels[train_indices]
-
-    # define generators
-    training_dataset = DatasetPairwiseTriplets(trainval_data, trainval_labels, InnerBatchSize, Augmentation,
-                                                  GeneratorMode)
-    training_loader = data.DataLoader(training_dataset, batch_size=OuterBatchSize, shuffle=True,
-                                             num_workers=8)
-
-    # Load all test datasets
-    FileList = glob.glob(os.path.join(args.test, "*.hdf5"))
-    TestData = dict()
-    for File in FileList:
-        path, DatasetName = os.path.split(File)
-        DatasetName = os.path.splitext(DatasetName)[0]
-
-        Data = read_matlab_imdb(File)
-
-        x = Data['Data'].astype(np.float32)
-        TestLabels = torch.from_numpy(np.squeeze(Data['Labels']))
-        del Data
-
-        x[:, :, :, :, 0] -= x[:, :, :, :, 0].mean()
-        x[:, :, :, :, 1] -= x[:, :, :, :, 1].mean()
-
-        x = NormalizeImages(x)
-        x = torch.from_numpy(x)
-
-        # TestLabels = torch.from_numpy(2 - Data['testLabels'])
-
-        TestData[DatasetName] = dict()
-        TestData[DatasetName]['Data'] = x
-        TestData[DatasetName]['Labels'] = TestLabels
-        del x
-    # ------------------------------------------------------------------------------------------
-
-    # -------------------------    loading previous results   ------------------------
-    net = MetricLearningCnn(CnnMode)
-
-    optimizer = torch.optim.Adam(net.parameters(), lr=LearningRate)
-
-    StartEpoch = 0
-    if ContinueMode:
-        # & os.path.isfile(ModelName):
-
-        if StartBestModel:
-            FileList = glob.glob(ModelsDirName + "visnir_best.pth")
-        else:
-            FileList = glob.glob(ModelsDirName + "visnir*")
-
-        if FileList:
-            FileList.sort(key=os.path.getmtime)
-
-            print(FileList[-1] + ' loaded')
-
-            checkpoint = torch.load(FileList[-1])
-            net.load_state_dict(checkpoint['state_dict'], strict=True)
-            try:
-                optimizer.load_state_dict(checkpoint['optimizer'])
-            except:
-                aa = 5
-
-            StartEpoch = checkpoint['epoch'] + 1
-
-            if 'FPR95' in checkpoint:
-                FPR95 = checkpoint['FPR95']
-                print('Loaded FPR95 = ' + repr(FPR95))
-
-        FileList = glob.glob(ModelsDirName + "visnir_best.pth")
-        if FileList:
-            checkpoint = torch.load(FileList[-1])
-            LowestError = checkpoint['LowestError']
-            print('LowestError: ' + repr(LowestError))
-            LowestError = 1e10
-        else:
-            LowestError = 1e10
-
-    if torch.cuda.device_count() > 1:
-        print("Let's use", torch.cuda.device_count(), "GPUs!")
-        net = nn.DataParallel(net)
-    net.to(device)
-
-    # -------------------- Initialization -----------------------
-    if AssymetricInitializationPhase:
-        net.module.netAS1 = copy.deepcopy(net.module.netS)
-        net.module.netAS2 = copy.deepcopy(net.module.netS)
-
-    if InitializeOptimizer:
-        # optimizer = torch.optim.Adam(net.parameters(), lr=LearningRate,weight_decay=0)
-
-        BaseCnnParams = net.module.BaseCnnParams()
-        HeadCnnParams = net.module.HeadCnnParams()
-
-        optimizer = torch.optim.Adam(net.parameters(), lr=LearningRate, weight_decay=0)
-
-        if False:
-            optimizer = torch.optim.Adam(
-                [{'params': BaseCnnParams, 'weight_decay': 0}, {'params': HeadCnnParams, 'weight_decay': 0}],
-                lr=LearningRate)
-
-            optimizer = optim.SGD([{'params': net.module.netS.parameters(), 'lr': 1e-5},
-                                   {'params': net.module.netAS1.parameters(), 'lr': 1e-5},
-                                   {'params': net.module.netAS2.parameters(), 'lr': 1e-5},
-                                   {'params': net.module.fc1.parameters(), 'lr': 1e-4},
-                                   {'params': net.module.fc2.parameters(), 'lr': 1e-4},
-                                   {'params': net.module.fc3.parameters(), 'lr': 1e-4}],
-                                  lr=LearningRate, momentum=0.0, weight_decay=0.00)  # momentum=0.9
-
-    # ------------------------------------------------------------------------------------------
-
-    # -------------------------------------  freeze layers --------------------------------------
-    net.module.FreezeSymmetricCnn(FreezeSymmetricCnn)
-    net.module.FreezeAsymmetricCnn(FreezeAsymmetricCnn)
-    # ------------------------------------------------------------------------------------------
-
-    ########################################################################
-    # Train the network
-    scheduler = ReduceLROnPlateau(optimizer, mode='min', factor=0.5, patience=2, verbose=True)
-    InnerProductLoss = InnerProduct()
-    CeLoss = nn.CrossEntropyLoss()
-
-    # writer.add_graph(net, images)
-    for epoch in range(StartEpoch, 80):  # loop over the dataset multiple times
-
+def load_test_datasets(test_path, batch_size):
+    test_files = glob.glob(os.path.join(test_path, "*.hdf5"))
+    test_loaders = {}
+    for test_file in test_files:
+        path, dataset_name = os.path.split(test_file)
+        dataset_name = os.path.splitext(dataset_name)[0]
+
+        print(f'Loading test dataset {dataset_name}...')
+        test_dataset = HDF5Dataset(dataset_name, path, test_file)
+        test_loaders[dataset_name] = DataLoader(test_dataset, batch_size=batch_size, shuffle=False, num_workers=8)
+    return test_loaders
+
+
+def evaluate_validation(net, val_data, val_labels, device, batch_size, cnn_mode):
+    net.eval()
+    # StepSize = 512
+    embedding1 = EvaluateNet(net.module.GetChannelCnn(0, cnn_mode), val_data[:, :, :, :, 0], device,
+                             batch_size)
+    embedding2 = EvaluateNet(net.module.GetChannelCnn(1, cnn_mode), val_data[:, :, :, :, 1], device,
+                             batch_size)
+    dist = np.power(embedding1 - embedding2, 2).sum(1)
+    val_error = FPR95Accuracy(dist, val_labels) * 100
+
+    # plt.hist(dist[np.where(val_labels==0)[0]], 10)
+    # plt.hist(dist[np.where(val_labels==1)[0]], 10)
+
+    # estimate fpr95 threshold
+    positives_indices = np.squeeze(np.asarray(np.where(val_labels == 1)))
+    curr_FPR95 = np.sort(dist[positives_indices])[int(0.95 * positives_indices.shape[0])]
+    return curr_FPR95, val_error
+
+
+def evaluate_test(net, test_loaders, device, cnn_mode, test_decimation, generator_mode):
+    if (generator_mode == 'Pairwise') | (generator_mode == 'PairwiseRot'):
+
+        test_samples_amount = 0
+        test_error = 0
+        net.eval()
+        for dataset in test_loaders:
+            test_loader = test_loaders[dataset]
+            embeddings1 = []
+            embeddings2 = []
+            for _, (data, labels) in enumerate(tqdm(test_loader, 0)):
+                batch_size = data.shape[0]
+                embedding1 = EvaluateNet(net.module.GetChannelCnn(0, cnn_mode),
+                                         data[0::test_decimation, :, :, :, 0], device,
+                                         batch_size)
+                embedding2 = EvaluateNet(net.module.GetChannelCnn(1, cnn_mode),
+                                         data[0::test_decimation, :, :, :, 1], device,
+                                         batch_size)
+                embeddings1.append(embedding1)
+                embeddings2.append(embedding2)
+            embedding1 = np.concatenate(embeddings1)
+            embedding2 = np.concatenate(embeddings2)
+            dist = np.power(embedding1 - embedding2, 2).sum(1)
+            test_error = FPR95Accuracy(dist, labels[0::test_decimation]) * 100
+            test_error += test_error * len(test_loader)
+            test_samples_amount += len(test_loader)
+        test_error /= test_samples_amount
+
+        if (net.module.Mode == 'Hybrid1') | (net.module.Mode == 'Hybrid2'):
+            net.module.Mode = 'Hybrid'
+
+        return test_error
+
+
+def train(training_loader, val_data, val_labels, test_loaders, net, optimizer, criterion, scheduler, device,
+          start_epoch, grad_accumulation_steps, generator_mode, cnn_mode, FPR95, fpr_hard_negatives, fpr_max_images_num,
+          batch_size, pairwise_triplets_batch_size, tb_writer, test_decimation, models_dir_name, best_file_name,
+          out_fname, architecture_description, evaluate_every, lowest_test_error):
+    for epoch in range(start_epoch, 80):
         running_loss = 0
         running_loss_ce = 0
         running_loss_pos = 0
         running_loss_neg = 0
         optimizer.zero_grad()
-        for i, Data in enumerate(tqdm(training_loader, 0)):
 
-            net = net.train()
+        for batch_num, Data in enumerate(tqdm(training_loader, 0)):
+            net.train()
 
             # get the inputs
             pos1 = Data['pos1']
@@ -328,25 +118,26 @@ def main():
             pos1 = np.reshape(pos1, (pos1.shape[0] * pos1.shape[1], 1, pos1.shape[2], pos1.shape[3]), order='F')
             pos2 = np.reshape(pos2, (pos2.shape[0] * pos2.shape[1], 1, pos2.shape[2], pos2.shape[3]), order='F')
 
-            if GeneratorMode == 'Pairwise':
+            if generator_mode == 'Pairwise':
 
-                if (CnnMode == 'PairwiseAsymmetric') | (CnnMode == 'PairwiseSymmetric'):
+                if (cnn_mode == 'PairwiseAsymmetric') | (cnn_mode == 'PairwiseSymmetric'):
 
-                    if FprHardNegatives:
+                    if fpr_hard_negatives:
                         pos1, pos2 = Compute_FPR_HardNegatives(net, pos1, pos2, device, FprValPos=FPR95,
-                                                               FprValNeg=1.5 * FPR95, MaxNoImages=MaxNoImages)
+                                                               FprValNeg=1.5 * FPR95, MaxNoImages=fpr_max_images_num)
 
                     pos1, pos2 = pos1.to(device), pos2.to(device)
-                    Embed = net(pos1, pos2)
-                    loss = criterion(Embed['Emb1'], Embed['Emb2']) + criterion(Embed['Emb2'], Embed['Emb1'])
+                    embeddings = net(pos1, pos2)
+                    loss = criterion(embeddings['Emb1'], embeddings['Emb2']) + criterion(embeddings['Emb2'],
+                                                                                         embeddings['Emb1'])
 
-                if CnnMode == 'Hybrid':
+                if cnn_mode == 'Hybrid':
 
                     # GPUtil.showUtilization()
-                    if FprHardNegatives:
+                    if fpr_hard_negatives:
 
                         Embed = Compute_FPR_HardNegatives(net, pos1, pos2, device, FprValPos=0.9 * FPR95,
-                                                          FprValNeg=1.1 * FPR95, MaxNoImages=MaxNoImages)
+                                                          FprValNeg=1.1 * FPR95, MaxNoImages=fpr_max_images_num)
 
                         Embed['PosIdx1'], Embed['PosIdx2'] = Embed['PosIdx1'].to(device), Embed['PosIdx2'].to(device)
                         EmbedPos = net(Embed['PosIdx1'], Embed['PosIdx2'])
@@ -401,7 +192,7 @@ def main():
             # backward + optimize
             loss.backward()
 
-            if ((i + 1) % grad_accumulation_steps) == 0:  # Wait for several backward steps
+            if ((batch_num + 1) % grad_accumulation_steps) == 0:  # Wait for several backward steps
                 optimizer.step()  # Now we can do an optimizer step
 
                 # zero the parameter gradients
@@ -409,132 +200,350 @@ def main():
 
             running_loss += loss.item()
 
-            PrintStep = 1000
-            if (i % PrintStep == 0):  # & (i>0):
+            if (batch_num % evaluate_every == 0):
 
-                if i > 0:
-                    running_loss /= PrintStep / grad_accumulation_steps
-                    running_loss_ce /= PrintStep
+                if batch_num > 0:
+                    running_loss /= evaluate_every / grad_accumulation_steps
+                    running_loss_ce /= evaluate_every
                     scheduler.step(running_loss)
-                    running_loss_neg /= PrintStep
-                    running_loss_pos /= PrintStep
+                    running_loss_neg /= evaluate_every
+                    running_loss_pos /= evaluate_every
 
                     print('running_loss_neg: ' + repr(100 * running_loss_neg)[0:5] + ' running_loss_pos: ' + repr(
                         100 * running_loss_pos)[0:5])
 
-                # val accuracy
-                net.eval()
-                StepSize = 512
-                EmbVal1 = EvaluateNet(net.module.GetChannelCnn(0, CnnMode), ValSetData[:, :, :, :, 0], device,
-                                      StepSize)
-                EmbVal2 = EvaluateNet(net.module.GetChannelCnn(1, CnnMode), ValSetData[:, :, :, :, 1], device,
-                                      StepSize)
-                Dist = np.power(EmbVal1 - EmbVal2, 2).sum(1)
-                ValError = FPR95Accuracy(Dist, ValSetLabels) * 100
+                curr_FPR95, val_error = evaluate_validation(net, val_data, val_labels, device, batch_size, cnn_mode)
 
-                # plt.hist(Dist[np.where(ValSetLabels==0)[0]], 10)
-                # plt.hist(Dist[np.where(ValSetLabels==1)[0]], 10)
-
-                del EmbVal1, EmbVal2
-
-                # estimate fpr95 threshold
-                PosValIdx = np.squeeze(np.asarray(np.where(ValSetLabels == 1)))
-                CurrentFPR95 = np.sort(Dist[PosValIdx])[int(0.95 * PosValIdx.shape[0])]
-                if i > 0:
-                    print('FPR95: ' + repr(CurrentFPR95) + ' Loss= ' + repr(running_loss / i))
-                net.train()
+                if batch_num > 0:
+                    print('FPR95: ' + repr(curr_FPR95) + ' Loss= ' + repr(running_loss / batch_num))
 
                 if (net.module.Mode == 'Hybrid1') | (net.module.Mode == 'Hybrid2'):
                     net.module.Mode = 'Hybrid'
 
-                net = net.eval()
-
-                if (i % 2000 == 0) & (i > 0):
-                    # FPR95 = CurrentFPR95
+                if (batch_num % 2000 == 0) and (batch_num > 0):
+                    # FPR95 = curr_FPR95
                     print('FPR95 changed: ' + repr(FPR95)[0:5])
 
-                # compute stats
-                if (GeneratorMode == 'Pairwise') | (GeneratorMode == 'PairwiseRot'):
+                if batch_num >= len(training_loader):
+                    test_decimation = 1
+                else:
+                    test_decimation = test_decimation
 
-                    if i >= len(training_loader):
-                        TestDecimation1 = 1
-                    else:
-                        TestDecimation1 = TestDecimation
+                test_error = evaluate_test(net, test_loaders, device, cnn_mode, test_decimation, generator_mode)
+                if not test_error:
+                    raise Exception('Test error after evaluation test is None')
 
-                    # test accuracy
-                    NoSamples = 0
-                    TotalTestError = 0
-                    for DataName in TestData:
-                        EmbTest1 = EvaluateNet(net.module.GetChannelCnn(0, CnnMode),
-                                               TestData[DataName]['Data'][0::TestDecimation1, :, :, :, 0], device,
-                                               StepSize)
-                        EmbTest2 = EvaluateNet(net.module.GetChannelCnn(1, CnnMode),
-                                               TestData[DataName]['Data'][0::TestDecimation1, :, :, :, 1], device,
-                                               StepSize)
-                        Dist = np.power(EmbTest1 - EmbTest2, 2).sum(1)
-                        TestData[DataName]['TestError'] = FPR95Accuracy(Dist, TestData[DataName]['Labels'][
-                                                                              0::TestDecimation1]) * 100
-                        TotalTestError += TestData[DataName]['TestError'] * TestData[DataName]['Data'].shape[0]
-                        NoSamples += TestData[DataName]['Data'].shape[0]
-                    TotalTestError /= NoSamples
+                if test_error < lowest_test_error:
+                    lowest_test_error = test_error
 
-                    del EmbTest1, EmbTest2
-
-                    if (net.module.Mode == 'Hybrid1') | (net.module.Mode == 'Hybrid2'):
-                        net.module.Mode = 'Hybrid'
-
-                if TotalTestError < LowestError:
-                    LowestError = TotalTestError
-
-                    print('Best error found and saved: ' + repr(LowestError)[0:5])
-                    filepath = ModelsDirName + BestFileName + '.pth'
+                    print('Best error found and saved: ' + repr(lowest_test_error)[0:5])
+                    filepath = os.path.join(models_dir_name, best_file_name + '.pth')
                     state = {'epoch': epoch,
                              'state_dict': net.module.state_dict(),
                              'optimizer': optimizer.state_dict(),
-                             'Description': Description,
-                             'LowestError': LowestError,
-                             'OuterBatchSize': OuterBatchSize,
-                             'InnerBatchSize': InnerBatchSize,
+                             'Description': architecture_description,
+                             'LowestError': lowest_test_error,
+                             'OuterBatchSize': batch_size,
+                             'InnerBatchSize': pairwise_triplets_batch_size,
                              'Mode': net.module.Mode,
-                             'CnnMode': CnnMode,
-                             'GeneratorMode': GeneratorMode,
+                             'CnnMode': cnn_mode,
+                             'GeneratorMode': generator_mode,
                              'Loss': criterion.Mode,
                              'FPR95': FPR95}
                     torch.save(state, filepath)
 
-                str = '[%d, %5d] loss: %.3f' % (epoch, i, 100 * running_loss) + ' Val Error: ' + repr(ValError)[0:6]
+                str = '[%d, %5d] loss: %.3f' % (epoch, batch_num, 100 * running_loss) + ' Val Error: ' + repr(
+                    val_error)[0:6]
                 if running_loss_ce > 0:
                     str += ' Rot loss: ' + repr(running_loss_ce)[0:6]
 
-                # for DataName in TestData:
-                #   str +=' ' + DataName + ': ' + repr(TestData[DataName]['TestError'])[0:6]
-                str += ' FPR95 = ' + repr(FPR95)[0:6] + ' Mean: ' + repr(TotalTestError)[0:6]
+                # for dataset in test_loaders:
+                #   str +=' ' + dataset + ': ' + repr(test_loaders[dataset]['TestError'])[0:6]
+                str += ' FPR95 = ' + repr(FPR95)[0:6] + ' Mean: ' + repr(test_error)[0:6]
                 print(str)
 
-                writer.add_scalar('Val Error', ValError, epoch * len(training_loader) + i)
-                writer.add_scalar('Test Error', TotalTestError, epoch * len(training_loader) + i)
-                writer.add_scalar('Loss', 100 * running_loss, epoch * len(training_loader) + i)
-                writer.add_scalar('FPR95', FPR95, epoch * len(training_loader) + i)
-                writer.add_text('Text', str)
-                writer.close()
+                tb_writer.add_scalar('Val Error', val_error, epoch * len(training_loader) + batch_num)
+                tb_writer.add_scalar('Test Error', test_error, epoch * len(training_loader) + batch_num)
+                tb_writer.add_scalar('Loss', 100 * running_loss, epoch * len(training_loader) + batch_num)
+                tb_writer.add_scalar('FPR95', FPR95, epoch * len(training_loader) + batch_num)
+                tb_writer.add_text('Text', str)
+                tb_writer.close()
 
         # save epoch
-        filepath = ModelsDirName + FileName + repr(epoch) + '.pth'
+        filepath = os.path.join(models_dir_name, f'{out_fname}{repr(epoch)}.pth')
         state = {'epoch': epoch,
                  'state_dict': net.module.state_dict(),
                  'optimizer': optimizer.state_dict(),
-                 'Description': Description,
-                 'OuterBatchSize': OuterBatchSize,
-                 'InnerBatchSize': InnerBatchSize,
+                 'Description': architecture_description,
+                 'OuterBatchSize': batch_size,
+                 'InnerBatchSize': pairwise_triplets_batch_size,
                  'Mode': net.module.Mode,
-                 'CnnMode': CnnMode,
-                 'GeneratorMode': GeneratorMode,
+                 'CnnMode': cnn_mode,
+                 'GeneratorMode': generator_mode,
                  'Loss': criterion.Mode,
                  'FPR95': FPR95}
 
         torch.save(state, filepath)
 
     print('Finished training')
+
+
+def parse_args():
+    parser = argparse.ArgumentParser(description='Train models for multimodal patch matching.')
+    parser.add_argument('--models', help='models path')
+    parser.add_argument('--logs', help='logs path')
+    parser.add_argument('--test', help='test data path')
+    parser.add_argument('--trainval', help='trainval data path')
+    parser.add_argument('--evaluate-every', type=int, default=1000, help='evaluate network and print steps')
+
+    return parser.parse_args()
+
+
+def main():
+    args = parse_args()
+    device = get_torch_device()
+
+    models_dir_name = args.models
+    LogsDirName = args.logs
+    architecture_description = 'Symmetric CNN with Triplet loss, no HM'
+    best_file_name = 'visnir_best'
+    out_fname = 'visnir_sym_triplet'
+    # TestDir = '/home/keller/Dropbox/multisensor/python/data/test/'
+    # TestDir = 'data\\Vis-Nir_grid\\test\\'
+    # TrainFile = '/home/keller/Dropbox/multisensor/python/data/Vis-Nir_Train.mat'
+    # TrainFile = './data/Vis-Nir_grid/Vis-Nir_grid_Train.hdf5'
+    test_decimation = 10
+    FPR95 = 0.8
+    fpr_max_images_num = 400
+    fpr_hard_negatives = False
+
+    tb_writer = SummaryWriter(LogsDirName)
+    lowest_test_error = 1e10
+
+    # ----------------------------     configuration   ---------------------------
+    Augmentation = {}
+    Augmentation["HorizontalFlip"] = False
+    Augmentation["VerticalFlip"] = False
+    Augmentation["Rotate90"] = True
+    Augmentation["Test"] = {'Do': True}
+    Augmentation["RandomCrop"] = {'Do': False, 'MinDx': 0, 'MaxDx': 0.2, 'MinDy': 0, 'MaxDy': 0.2}
+
+    # default values
+    FreezeSymmetricCnn = True
+    FreezeAsymmetricCnn = True
+
+    AssymetricInitializationPhase = False
+    grad_accumulation_steps = 1
+
+    if True:
+        # generator_mode = 'PairwiseRot'
+        generator_mode = 'Pairwise'
+        cnn_mode = 'PairwiseSymmetric'
+        # criterion = OnlineHardNegativeMiningTripletLoss(margin=1, Mode='Random')
+        criterion = OnlineHardNegativeMiningTripletLoss(margin=1, Mode='Hardest')
+        # criterion         = OnlineHardNegativeMiningTripletLoss(margin=1, Mode='MostHardest', HardRatio=1.0/8)
+        architecture_description = 'PairwiseSymmetric Hardest'
+
+        InitializeOptimizer = True
+        LearningRate = 1e-4
+        batch_size = 24
+        pairwise_triplets_batch_size = 6
+        Augmentation["Test"] = {'Do': False}
+        Augmentation["HorizontalFlip"] = True
+        Augmentation["VerticalFlip"] = True
+        Augmentation["Rotate90"] = True
+        Augmentation["RandomCrop"] = {'Do': True, 'MinDx': 0, 'MaxDx': 0.2, 'MinDy': 0, 'MaxDy': 0.2}
+        grad_accumulation_steps = 1
+
+        FreezeSymmetricCnn = False
+        FreezeAsymmetricCnn = True
+
+        fpr_hard_negatives = False
+
+        StartBestModel = True
+
+    if False:
+        generator_mode = 'Pairwise'
+        cnn_mode = 'PairwiseAsymmetric'
+        # criterion     = OnlineHardNegativeMiningTripletLoss(margin=1, Mode='Random')
+        criterion = OnlineHardNegativeMiningTripletLoss(margin=1, Mode='Hardest')
+        # criterion = OnlineHardNegativeMiningTripletLoss(margin=1, Mode='HardPos', HardRatio=1.0/2, PosRatio=1. / 2)
+
+        InitializeOptimizer = True
+        StartBestModel = False
+
+        FreezeSymmetricCnn = True
+        FreezeAsymmetricCnn = False
+
+        LearningRate = 1e-4
+        batch_size = 24
+        pairwise_triplets_batch_size = 6
+
+        Augmentation["Test"] = {'Do': False}
+        Augmentation["HorizontalFlip"] = True
+        Augmentation["VerticalFlip"] = True
+        Augmentation["Rotate90"] = True
+        Augmentation["RandomCrop"] = {'Do': True, 'MinDx': 0, 'MaxDx': 0.2, 'MinDy': 0, 'MaxDy': 0.2}
+
+        AssymetricInitializationPhase = True
+        architecture_description = 'PairwiseAsymmetric'
+
+        StartBestModel = True
+
+    if False:
+        # generator_mode      = 'PairwiseRot'
+        generator_mode = 'Pairwise'
+        # cnn_mode            = 'HybridRot'
+        cnn_mode = 'Hybrid'
+        # criterion           = OnlineHardNegativeMiningTripletLoss(margin=1, Mode='Random')
+        # criterion           = OnlineHardNegativeMiningTripletLoss(margin=1, Mode='Hardest')
+        criterion = OnlineHardNegativeMiningTripletLoss(margin=1, Mode='HardPos', HardRatio=1.0 / 2, PosRatio=1. / 2)
+        # HardestCriterion = OnlineHardNegativeMiningTripletLoss(margin=1, Mode='Hardest')
+        InitializeOptimizer = True
+        batch_size = 16  # 24
+        pairwise_triplets_batch_size = 4 * 12  # 24
+        LearningRate = 1e-2
+
+        fpr_hard_negatives = False
+        StartBestModel = True
+
+        FreezeSymmetricCnn = True
+        FreezeAsymmetricCnn = False
+
+        AssymetricInitializationPhase = False
+
+        Augmentation["Test"] = {'Do': False}
+        Augmentation["HorizontalFlip"] = True
+        Augmentation["VerticalFlip"] = True
+        Augmentation["Rotate90"] = True
+        Augmentation["RandomCrop"] = {'Do': True, 'MinDx': 0, 'MaxDx': 0.2, 'MinDy': 0, 'MaxDy': 0.2}
+        grad_accumulation_steps = 1
+
+        fpr_max_images_num = 400
+
+        test_decimation = 20
+
+    ContinueMode = True
+
+    # ----------------------------- read data----------------------------------------------
+    trainval_imdb = read_matlab_imdb(args.trainval)
+    trainval_data = trainval_imdb['Data']
+    trainval_labels = np.squeeze(trainval_imdb['Labels'])
+    trainval_set = np.squeeze(trainval_imdb['Set'])
+
+    # ShowTwoImages(trainval_data[0:3, :, :, 0])
+    # ShowTwoRowImages(trainval_data[0:3, :, :, 0], trainval_data[0:3, :, :, 1])
+
+    train_indices = np.squeeze(np.asarray(np.where(trainval_set == 1)))
+    val_indices = np.squeeze(np.asarray(np.where(trainval_set == 3)))
+
+    # get val data
+    val_labels = torch.from_numpy(trainval_labels[val_indices])
+    val_data = trainval_data[val_indices].astype(np.float32)
+
+    # ShowTwoRowImages(np.squeeze(val_data[0:4, :, :, :, 0]), np.squeeze(val_data[0:4, :, :, :, 1]))
+    # val_data = torch.from_numpy(val_data).float().cpu()
+    val_data[:, :, :, :, 0] -= val_data[:, :, :, :, 0].mean()
+    val_data[:, :, :, :, 1] -= val_data[:, :, :, :, 1].mean()
+    val_data = torch.from_numpy(NormalizeImages(val_data))
+
+    # train data
+    train_data = np.squeeze(trainval_data[train_indices,])
+    train_labels = trainval_labels[train_indices]
+
+    # define generators
+    training_dataset = PairwiseTriplets(train_data, train_labels, pairwise_triplets_batch_size, Augmentation,
+                                        generator_mode)
+    training_loader = DataLoader(training_dataset, batch_size=batch_size, shuffle=True, num_workers=8)
+
+    test_loaders = load_test_datasets(args.test, batch_size)
+    # ------------------------------------------------------------------------------------------
+
+    # -------------------------    loading previous results   ------------------------
+    net = MetricLearningCnn(cnn_mode)
+
+    optimizer = torch.optim.Adam(net.parameters(), lr=LearningRate)
+
+    start_epoch = 0
+    if ContinueMode:
+        # & os.path.isfile(ModelName):
+
+        if StartBestModel:
+            model_checkpoints = glob.glob(os.path.join(models_dir_name, "visnir_best.pth"))
+        else:
+            model_checkpoints = glob.glob(os.path.join(models_dir_name, "visnir*"))
+
+        if model_checkpoints:
+            model_checkpoints.sort(key=os.path.getmtime)
+
+            print(model_checkpoints[-1] + ' loaded')
+
+            checkpoint = torch.load(model_checkpoints[-1])
+            net.load_state_dict(checkpoint['state_dict'], strict=True)
+            optimizer.load_state_dict(checkpoint['optimizer'])
+
+            start_epoch = checkpoint['epoch'] + 1
+
+            if 'FPR95' in checkpoint:
+                FPR95 = checkpoint['FPR95']
+                print('Loaded FPR95 = ' + repr(FPR95))
+
+        model_checkpoints = glob.glob(os.path.join(models_dir_name, "visnir_best.pth"))
+        if model_checkpoints:
+            checkpoint = torch.load(model_checkpoints[-1])
+            lowest_test_error = checkpoint['LowestError']
+            print('lowest_test_error: ' + repr(lowest_test_error))
+            lowest_test_error = 1e10
+        else:
+            lowest_test_error = 1e10
+
+    if torch.cuda.device_count() > 1:
+        print("Let's use", torch.cuda.device_count(), "GPUs!")
+    net = nn.DataParallel(net)
+    net.to(device)
+
+    # -------------------- Initialization -----------------------
+    if AssymetricInitializationPhase:
+        net.module.netAS1 = copy.deepcopy(net.module.netS)
+        net.module.netAS2 = copy.deepcopy(net.module.netS)
+
+    if InitializeOptimizer:
+        # optimizer = torch.optim.Adam(net.parameters(), lr=LearningRate,weight_decay=0)
+
+        BaseCnnParams = net.module.BaseCnnParams()
+        HeadCnnParams = net.module.HeadCnnParams()
+
+        optimizer = torch.optim.Adam(net.parameters(), lr=LearningRate, weight_decay=0)
+
+        if False:
+            optimizer = torch.optim.Adam(
+                [{'params': BaseCnnParams, 'weight_decay': 0}, {'params': HeadCnnParams, 'weight_decay': 0}],
+                lr=LearningRate)
+
+            optimizer = optim.SGD([{'params': net.module.netS.parameters(), 'lr': 1e-5},
+                                   {'params': net.module.netAS1.parameters(), 'lr': 1e-5},
+                                   {'params': net.module.netAS2.parameters(), 'lr': 1e-5},
+                                   {'params': net.module.fc1.parameters(), 'lr': 1e-4},
+                                   {'params': net.module.fc2.parameters(), 'lr': 1e-4},
+                                   {'params': net.module.fc3.parameters(), 'lr': 1e-4}],
+                                  lr=LearningRate, momentum=0.0, weight_decay=0.00)  # momentum=0.9
+
+    # ------------------------------------------------------------------------------------------
+
+    # -------------------------------------  freeze layers --------------------------------------
+    net.module.FreezeSymmetricCnn(FreezeSymmetricCnn)
+    net.module.FreezeAsymmetricCnn(FreezeAsymmetricCnn)
+    # ------------------------------------------------------------------------------------------
+
+    ########################################################################
+    # Train the network
+    scheduler = ReduceLROnPlateau(optimizer, mode='min', factor=0.5, patience=2, verbose=True)
+
+    # tb_writer.add_graph(net, images)
+    train(training_loader, val_data, val_labels, test_loaders, net, optimizer, criterion, scheduler, device,
+          start_epoch, grad_accumulation_steps, generator_mode, cnn_mode, FPR95, fpr_hard_negatives, fpr_max_images_num,
+          batch_size, pairwise_triplets_batch_size, tb_writer, test_decimation, models_dir_name, best_file_name,
+          out_fname, architecture_description, args.evaluate_every, lowest_test_error)
 
 
 if __name__ == '__main__':
