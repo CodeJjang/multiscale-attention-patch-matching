@@ -9,32 +9,26 @@ from skimage.transform import resize
 
 class PairwiseTriplets(Dataset):
 
-    def __init__(self, Data, Labels, batch_size, Augmentation, Mode, NegativeMode='Random'):
-        self.PositiveIdx = np.squeeze(np.asarray(np.where(Labels == 1)));
-        self.NegativeIdx = np.squeeze(np.asarray(np.where(Labels == 0)));
+    def __init__(self, data, labels, batch_size, augmentations, mode, negative_mode='Random'):
+        self.positive_indices = np.squeeze(np.asarray(np.where(labels == 1)));
+        self.negative_indices = np.squeeze(np.asarray(np.where(labels == 0)));
 
-        self.PositiveIdxNo = len(self.PositiveIdx)
-        self.NegativeIdxNo = len(self.NegativeIdx)
-
-        self.Data = Data
-        self.Labels = Labels
+        self.data = data
+        self.labels = labels
 
         self.batch_size = batch_size
-        self.Augmentation = Augmentation
+        self.augmentations = augmentations
 
-        self.Mode = Mode
-        self.NegativeMode = NegativeMode
+        self.mode = mode
+        self.negative_mode = negative_mode
 
-        self.ChannelMean1 = Data[:, :, :, 0].mean()
-        self.ChannelMean2 = Data[:, :, :, 1].mean()
-
-        self.RowsNo = Data.shape[1]
-        self.ColsNo = Data.shape[2]
+        self.data_height = data.shape[1]
+        self.data_width = data.shape[2]
 
         self.transform = A.ReplayCompose([
             # A.Transpose(always_apply=False, p=0.5),
             # A.Flip(always_apply=False, p=0.5),
-            # A.RandomResizedCrop(self.RowsNo, self.ColsNo,scale=(0.9, 1.1) ,ratio=(0.9, 1.1), interpolation=cv2.INTER_CUBIC,always_apply=False,p=0.5),
+            # A.RandomResizedCrop(self.data_height, self.data_width,scale=(0.9, 1.1) ,ratio=(0.9, 1.1), interpolation=cv2.INTER_CUBIC,always_apply=False,p=0.5),
             A.Rotate(limit=5, interpolation=cv2.INTER_CUBIC, border_mode=cv2.BORDER_REFLECT_101, always_apply=False,
                      p=0.5),
             # A.RandomBrightnessContrast(brightness_limit=0.2, contrast_limit=0.2, brightness_by_max=True,always_apply=False, p=0.5),
@@ -44,99 +38,99 @@ class PairwiseTriplets(Dataset):
         ])
 
     def __len__(self):
-        return self.Data.shape[0]
+        return self.data.shape[0]
 
     def __getitem__(self, index):
 
         # Select pos2 pairs
-        PosIdx = np.random.randint(self.PositiveIdxNo, size=self.batch_size)
-        PosIdx = self.PositiveIdx[PosIdx]
-        PosImages = self.Data[PosIdx, :, :, :].astype(np.float32)
+        positive_idx = np.random.randint(len(self.positive_indices), size=self.batch_size)
+        positive_idx = self.positive_indices[positive_idx]
+        positive_images = self.data[positive_idx, :, :, :].astype(np.float32)
 
-        # imshow(torchvision.utils.make_grid(PosImages[0,:,:,0]))
-        # plt.imshow(np.squeeze(PosImages[2040, :, :, :]));  # plt.show()
+        # imshow(torchvision.utils.make_grid(positive_images[0,:,:,0]))
+        # plt.imshow(np.squeeze(positive_images[2040, :, :, :]));  # plt.show()
 
-        pos1 = PosImages[:, :, :, 0]
-        pos2 = PosImages[:, :, :, 1]
+        pos1 = positive_images[:, :, :, 0]
+        pos2 = positive_images[:, :, :, 1]
 
-        for i in range(0, PosImages.shape[0]):
+        for i in range(0, positive_images.shape[0]):
 
             # Flip LR
-            if (np.random.uniform(0, 1) > 0.5) & self.Augmentation["HorizontalFlip"]:
+            if (np.random.uniform(0, 1) > 0.5) & self.augmentations["HorizontalFlip"]:
                 pos1[i,] = np.fliplr(pos1[i,])
                 pos2[i,] = np.fliplr(pos2[i,])
 
             # flip UD
-            if (np.random.uniform(0, 1) > 0.5) & self.Augmentation["VerticalFlip"]:
+            if (np.random.uniform(0, 1) > 0.5) & self.augmentations["VerticalFlip"]:
                 pos1[i,] = np.flipud(pos1[i,])
                 pos2[i,] = np.flipud(pos2[i,])
 
             # test
-            if (np.random.uniform(0, 1) > 0) & self.Augmentation["Test"]['Do']:
+            if (np.random.uniform(0, 1) > 0) & self.augmentations["Test"]['Do']:
                 # plt.imshow(pos1[i,:,:],cmap='gray');plt.show();
                 data = self.transform(image=pos1[i, :, :])
                 pos1[i,] = data['image']
                 pos2[i,] = A.ReplayCompose.replay(data['replay'], image=pos2[i, :, :])['image']
 
             # rotate:0, 90, 180,270,
-            if self.Augmentation["Rotate90"]:
+            if self.augmentations["Rotate90"]:
                 idx = np.random.randint(low=0, high=4, size=1)[0]  # choose rotation
                 pos1[i,] = np.rot90(pos1[i,], idx)
                 pos2[i,] = np.rot90(pos2[i,], idx)
 
             # random crop
-            if (np.random.uniform(0, 1) > 0.5) & self.Augmentation["RandomCrop"]['Do']:
-                dx = np.random.uniform(self.Augmentation["RandomCrop"]['MinDx'],
-                                       self.Augmentation["RandomCrop"]['MaxDx'])
-                dy = np.random.uniform(self.Augmentation["RandomCrop"]['MinDy'],
-                                       self.Augmentation["RandomCrop"]['MaxDy'])
+            if (np.random.uniform(0, 1) > 0.5) & self.augmentations["RandomCrop"]['Do']:
+                dx = np.random.uniform(self.augmentations["RandomCrop"]['MinDx'],
+                                       self.augmentations["RandomCrop"]['MaxDx'])
+                dy = np.random.uniform(self.augmentations["RandomCrop"]['MinDy'],
+                                       self.augmentations["RandomCrop"]['MaxDy'])
 
                 dx = dy
 
-                x0 = int(dx * self.ColsNo)
-                y0 = int(dy * self.RowsNo)
+                x0 = int(dx * self.data_width)
+                y0 = int(dy * self.data_height)
 
                 # ShowRowImages(pos1[0:1,:,:])
                 # plt.imshow(pos1[i,:,:],cmap='gray');plt.show();
                 # aa = pos1[i,y0:,x0:]
 
-                pos1[i,] = resize(pos1[i, y0:, x0:], (self.RowsNo, self.ColsNo))
+                pos1[i,] = resize(pos1[i, y0:, x0:], (self.data_height, self.data_width))
 
                 # ShowRowImages(pos1[0:1, :, :])
 
-                pos2[i,] = resize(pos2[i, y0:, x0:], (self.RowsNo, self.ColsNo))
+                pos2[i,] = resize(pos2[i, y0:, x0:], (self.data_height, self.data_width))
 
-        Result = dict()
+        result = dict()
 
-        if (self.Mode == 'Pairwise') | (self.Mode == 'PairwiseRot'):
-            pos1 -= self.ChannelMean1
-            pos2 -= self.ChannelMean2
+        if (self.mode == 'Pairwise') | (self.mode == 'PairwiseRot'):
+            pos1 -= data[:, :, :, 0].mean()
+            pos2 -= data[:, :, :, 1].mean()
 
-            Result['pos1'] = NormalizeImages(pos1)
-            Result['pos2'] = NormalizeImages(pos2)
+            result['pos1'] = NormalizeImages(pos1)
+            result['pos2'] = NormalizeImages(pos2)
 
-            if self.Mode == 'PairwiseRot':
+            if self.mode == 'PairwiseRot':
                 Rot1 = np.random.randint(low=0, high=4, size=pos1.shape[0])  # choose rotation
                 Rot2 = np.random.randint(low=0, high=4, size=pos1.shape[0])  # choose rotation
 
-                Result['RotPos1'] = np.zeros(pos1.shape, Result['pos1'].dtype)
-                Result['RotPos2'] = np.zeros(pos2.shape, Result['pos1'].dtype)
+                result['RotPos1'] = np.zeros(pos1.shape, result['pos1'].dtype)
+                result['RotPos2'] = np.zeros(pos2.shape, result['pos1'].dtype)
 
                 # ShowRowImages(pos1[0:1,:,:])
                 # plt.imshow(pos1[i,:,:],cmap='gray');plt.show();plt.show()
                 for k in range(0, pos1.shape[0]):
-                    Result['RotPos1'][k,] = np.rot90(Result['pos1'][k,], Rot1[k])
-                    Result['RotPos2'][k,] = np.rot90(Result['pos2'][k,], Rot2[k])
+                    result['RotPos1'][k,] = np.rot90(result['pos1'][k,], Rot1[k])
+                    result['RotPos2'][k,] = np.rot90(result['pos2'][k,], Rot2[k])
 
-                Result['RotLabel1'] = Rot1.astype(np.int64)
-                Result['RotLabel2'] = Rot2.astype(np.int64)
+                result['RotLabel1'] = Rot1.astype(np.int64)
+                result['RotLabel2'] = Rot2.astype(np.int64)
 
-            return Result
+            return result
 
-        if self.Mode == 'Triplet':
-            Result['pos1'] = NormalizeImages(pos1)
-            Result['pos2'] = NormalizeImages(pos2)
-            Result['neg1'] = NormalizeImages(neg1)
-            Result['neg2'] = NormalizeImages(neg2)
+        if self.mode == 'Triplet':
+            result['pos1'] = NormalizeImages(pos1)
+            result['pos2'] = NormalizeImages(pos2)
+            result['neg1'] = NormalizeImages(neg1)
+            result['neg2'] = NormalizeImages(neg2)
 
-            return Result
+            return result
