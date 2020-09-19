@@ -57,9 +57,9 @@ class ConvNet(nn.Module):
         return (x - mp.detach().unsqueeze(-1).unsqueeze(-1).unsqueeze(-1).expand_as(x)) / sp.detach().unsqueeze(
             -1).unsqueeze(-1).unsqueeze(1).expand_as(x)
 
-    def FreezeCnn(self, OnOff):
+    def freeze(self):
         for param in self.parameters():
-            param.requires_grad = not OnOff
+            param.requires_grad = False
 
     def forward(self, input1, Mode='Normalized'):
         bs = input1.size(0)
