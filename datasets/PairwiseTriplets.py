@@ -103,8 +103,8 @@ class PairwiseTriplets(Dataset):
         result = dict()
 
         if (self.mode == 'Pairwise') | (self.mode == 'PairwiseRot'):
-            pos1 -= data[:, :, :, 0].mean()
-            pos2 -= data[:, :, :, 1].mean()
+            pos1 -= self.data[:, :, :, 0].mean()
+            pos2 -= self.data[:, :, :, 1].mean()
 
             result['pos1'] = NormalizeImages(pos1)
             result['pos2'] = NormalizeImages(pos2)
