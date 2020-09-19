@@ -1,25 +1,13 @@
 import torch
-import torchvision
-import matplotlib.pyplot as plt
 import numpy as np
 import glob
 import os
-import copy
-from tensorboardX import SummaryWriter
 from torch import device
-from torch.optim.lr_scheduler import ReduceLROnPlateau
-from torch.utils import data
-import torch.optim as optim
 import torch.nn as nn
 from tqdm import tqdm
-
-# my classes
-from my_classes import imshow, ShowRowImages, ShowTwoRowImages
-from my_classes import DatasetPairwiseTriplets, FPR95Accuracy
-from my_classes import SingleNet, MetricLearningCnn, EvaluateNet, SiamesePairwiseSoftmax, NormalizeImages
-from losses import ContrastiveLoss, TripletLoss, OnlineTripletLoss, OnlineHardNegativeMiningTripletLoss, InnerProduct
+from networks.MetricLearningCNN import MetricLearningCNN
 from read_matlab_imdb import read_matlab_imdb
-
+from utils import NormalizeImages, FPR95Accuracy, EvaluateNet
 import warnings
 warnings.filterwarnings("ignore", message="UserWarning: albumentations.augmentations.transforms.RandomResizedCrop")
 
@@ -104,7 +92,7 @@ if __name__ == '__main__':
         print(File+ ' loded')
 
         checkpoint = torch.load(File)
-        net = MetricLearningCnn(checkpoint['Mode'])
+        net = MetricLearningCNN(checkpoint['Mode'])
         print('Mode:' + checkpoint['Mode'] + ' InnerBatchSize:' + repr(checkpoint['InnerBatchSize']))
         net.to(device)
         net.load_state_dict(checkpoint['state_dict'])

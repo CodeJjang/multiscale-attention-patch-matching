@@ -1,29 +1,12 @@
 import torch
-import torchvision
-import matplotlib.pyplot as plt
 import numpy as np
 import glob
 import os
-import copy
-from tensorboardX import SummaryWriter
-from torch.optim.lr_scheduler import ReduceLROnPlateau
-from torch.utils import data
-import torch.optim as optim
-import torch.nn as nn
-from tqdm import tqdm
-
-#my classes
-from my_classes import imshow, ShowRowImages, ShowTwoRowImages, EvaluateSofmaxNet
-from my_classes import DatasetPairwiseTriplets, FPR95Accuracy
-from my_classes import SingleNet, MetricLearningCnn, EvaluateNet, SiamesePairwiseSoftmax,NormalizeImages
-from losses import ContrastiveLoss, TripletLoss,OnlineTripletLoss,OnlineHardNegativeMiningTripletLoss
 from read_matlab_imdb import read_matlab_imdb
 import h5py
 
 
-
-
-from multiprocessing import Process, freeze_support
+from multiprocessing import freeze_support
 
 if __name__ == '__main__':
     freeze_support()

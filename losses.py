@@ -2,9 +2,7 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 import numpy as np
-import matplotlib.pyplot as plt
-
-from my_classes import EvaluateDualNets, FPR95Threshold
+from utils import FPR95Threshold, EvaluateDualNets
 
 
 def sim_matrix(a, b, eps=1e-8):
