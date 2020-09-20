@@ -95,12 +95,12 @@ def evaluate_test(net, test_loaders, device, cnn_mode, test_decimation, generato
             labels = np.concatenate(labels)
             dist = np.power(embedding1 - embedding2, 2).sum(1)
             test_error = FPR95Accuracy(dist, labels) * 100
-            test_error += test_error * len(test_loader)
-            test_samples_amount += len(test_loader)
+            test_error += test_error * seen_samples
+            test_samples_amount += seen_samples
         test_error /= test_samples_amount
 
-        if (net.module.Mode == 'Hybrid1') | (net.module.Mode == 'Hybrid2'):
-            net.module.Mode = 'Hybrid'
+        if (net.module.mode == 'Hybrid1') | (net.module.mode == 'Hybrid2'):
+            net.module.mode = 'Hybrid'
 
         return test_error
 
@@ -116,12 +116,12 @@ def train(train_loader, val_data, val_labels, test_loaders, net, optimizer, crit
         running_loss_neg = 0
         optimizer.zero_grad()
 
-        for batch_num, Data in enumerate(tqdm(train_loader, desc='Train', position=0), 1):
+        for batch_num, data in enumerate(tqdm(train_loader, desc='Train', position=0), 1):
             net.train()
 
             # get the inputs
-            pos1 = Data['pos1']
-            pos2 = Data['pos2']
+            pos1 = data['pos1']
+            pos2 = data['pos2']
 
             pos1 = np.reshape(pos1, (pos1.shape[0] * pos1.shape[1], 1, pos1.shape[2], pos1.shape[3]), order='F')
             pos2 = np.reshape(pos2, (pos2.shape[0] * pos2.shape[1], 1, pos2.shape[2], pos2.shape[3]), order='F')
@@ -208,7 +208,7 @@ def train(train_loader, val_data, val_labels, test_loaders, net, optimizer, crit
 
             running_loss += loss.item()
 
-            if (batch_num % evaluate_every == 0):
+            if batch_num % evaluate_every == 0:
                 running_loss /= evaluate_every / grad_accumulation_steps
                 running_loss_ce /= evaluate_every
                 scheduler.step(running_loss)
@@ -226,8 +226,8 @@ def train(train_loader, val_data, val_labels, test_loaders, net, optimizer, crit
                 loss = running_loss / batch_num
                 tqdm.write(print_val_fpr + 'Loss: ' + repr(loss))
 
-                if (net.module.Mode == 'Hybrid1') | (net.module.Mode == 'Hybrid2'):
-                    net.module.Mode = 'Hybrid'
+                if (net.module.mode == 'Hybrid1') | (net.module.mode == 'Hybrid2'):
+                    net.module.mode = 'Hybrid'
 
                 if (batch_num % 2000 == 0) and (batch_num > 0):
                     # FPR95 = curr_FPR95
@@ -251,10 +251,11 @@ def train(train_loader, val_data, val_labels, test_loaders, net, optimizer, crit
                 tb_writer.add_scalar('FPR95', FPR95, epoch * len(train_loader) + batch_num)
                 tb_writer.add_text('Text', str)
                 tb_writer.close()
+                break
 
         if not skip_test:
             test_error = evaluate_test(net, test_loaders, device, cnn_mode, test_decimation, generator_mode)
-            if not test_error:
+            if test_error is None:
                 raise Exception('Test error after evaluation test is None')
 
             tb_writer.add_scalar('Test Error', test_error, epoch * len(train_loader) + batch_num)
@@ -271,10 +272,10 @@ def train(train_loader, val_data, val_labels, test_loaders, net, optimizer, crit
                          'LowestError': lowest_error,
                          'OuterBatchSize': batch_size,
                          'InnerBatchSize': pairwise_triplets_batch_size,
-                         'Mode': net.module.Mode,
+                         'Mode': net.module.mode,
                          'CnnMode': cnn_mode,
                          'GeneratorMode': generator_mode,
-                         'Loss': criterion.Mode,
+                         'Loss': criterion.mode,
                          'FPR95': FPR95}
                 torch.save(state, filepath)
         else:
@@ -286,10 +287,10 @@ def train(train_loader, val_data, val_labels, test_loaders, net, optimizer, crit
                      'Description': architecture_description,
                      'OuterBatchSize': batch_size,
                      'InnerBatchSize': pairwise_triplets_batch_size,
-                     'Mode': net.module.Mode,
+                     'Mode': net.module.mode,
                      'CnnMode': cnn_mode,
                      'GeneratorMode': generator_mode,
-                     'Loss': criterion.Mode,
+                     'Loss': criterion.mode,
                      'FPR95': FPR95}
 
             torch.save(state, filepath)
@@ -376,13 +377,14 @@ def parse_args():
     parser.add_argument('--evaluate-every', type=int, default=1000, help='evaluate network and print steps')
     parser.add_argument('--skip-validation', type=bool, default=False, help='whether to skip validation evaluation')
     parser.add_argument('--skip-test', type=bool, default=False, help='whether to skip test evaluation')
-    parser.add_argument('--continue-from-checkpoint', type=bool, default=True,
+    parser.add_argument('--continue-from-checkpoint', type=bool, default=False,
                         help='whether to continue training from checkpoint')
     parser.add_argument('--continue-from-best-model', type=bool, default=True,
                         help='whether to continue training using best model')
     parser.add_argument('--batch-size', type=int, default=24, help='batch size')
     parser.add_argument('--pairs-triplets-batch-size', type=int, default=6, help='batch size of pairs/triplets')
     parser.add_argument('--lr', type=float, default=1e-4, help='batch size of pairs/triplets')
+    parser.add_argument('--test-decimation', type=int, default=10, help='factor to reduce test size by')
 
     return parser.parse_args()
 
@@ -398,7 +400,7 @@ def main():
     out_fname = 'visnir_sym_triplet'
     # TrainFile = '/home/keller/Dropbox/multisensor/python/data/Vis-Nir_Train.mat'
     # TrainFile = './data/Vis-Nir_grid/Vis-Nir_grid_Train.hdf5'
-    test_decimation = 1000
+    test_decimation = args.test_decimation
     FPR95 = 0.8
     fpr_max_images_num = 400
     fpr_hard_negatives = False
@@ -494,7 +496,7 @@ def main():
 
         fpr_max_images_num = 400
 
-        test_decimation = 20
+        test_decimation = args.test_decimation # 20
 
     train_loader, val_data, val_labels = load_trainval_dataset(args.trainval, augmentations, generator_mode, batch_size,
                                                                pairwise_triplets_batch_size)

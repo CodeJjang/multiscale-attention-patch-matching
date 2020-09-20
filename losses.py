@@ -62,7 +62,7 @@ class PairwiseLoss(nn.Module):
     def __init__(self):
         super(PairwiseLoss, self).__init__()
 
-        self.Mode = 'FPR'
+        self.mode = 'FPR'
 
     def forward(self, Embed1, Embed2):
         if (Embed1.nelement() == 0) | (Embed2.nelement() == 0):
@@ -170,7 +170,7 @@ def HardTrainingLoss(net, pos1, pos2, PosRatio, HardRatio, T, device):
     pos1, pos2 = pos1.to(device), pos2.to(device)
     Embed = net(pos1, pos2)
 
-    if net.module.Mode == 'Hybrid':
+    if net.module.mode == 'Hybrid':
         emb1 = Embed['Hybrid1']
         emb2 = Embed['Hybrid2']
 
@@ -204,7 +204,7 @@ class OnlineHardNegativeMiningTripletLoss(nn.Module):
     def __init__(self, margin, Mode, HardRatio=1, PosRatio=1, NegPow=1, PosPow=1):
         super(OnlineHardNegativeMiningTripletLoss, self).__init__()
         self.margin = margin
-        self.Mode = Mode
+        self.mode = Mode
         self.HardRatio = HardRatio
         self.PosRatio = PosRatio
         self.PosPow = PosPow
@@ -212,25 +212,25 @@ class OnlineHardNegativeMiningTripletLoss(nn.Module):
 
     def forward(self, emb1, emb2):
 
-        if self.Mode == 'Random':
+        if self.mode == 'Random':
             NegIdx = np.random.randint(emb1.shape[0], size=emb1.shape[0])
             ap_distances = (emb1 - emb2).pow(2).sum(1)  # .pow(.5)
             an_distances = (emb1 - emb2[NegIdx, :]).pow(2).sum(1)  # .pow(.5)
             margin = ap_distances - an_distances
 
-        if (self.Mode == 'Hardest') | (self.Mode == 'HardPos'):
+        if (self.mode == 'Hardest') | (self.mode == 'HardPos'):
             # Dist  = sim_matrix(emb1,emb2).cpu().detach()
             Similarity = torch.mm(emb1, emb2.transpose(0, 1)).cpu()
             Similarity -= 1000000000 * torch.eye(n=Similarity.shape[0], m=Similarity.shape[1])
             NegIdx = torch.argmax(Similarity, axis=1).detach()
 
-        if (self.Mode == 'Hardest'):
+        if (self.mode == 'Hardest'):
             ap_distances = (emb1 - emb2[0:emb1.shape[0], :]).pow(2).sum(1)  # .pow(.5)
             an_distances = (emb1 - emb2[NegIdx, :]).pow(2).sum(1)
 
             margin = ap_distances - an_distances
 
-        if (self.Mode == 'HardPos'):
+        if (self.mode == 'HardPos'):
             ap_distances = (emb1 - emb2[0:emb1.shape[0], :, ]).pow(2).sum(1)  # .pow(.5)
             an_distances = (emb1 - emb2[NegIdx, :]).pow(2).sum(1)
 
