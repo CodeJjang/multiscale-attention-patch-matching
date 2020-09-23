@@ -7,7 +7,7 @@ import os
 import copy
 from tensorboardX import SummaryWriter
 from torch.optim.lr_scheduler import ReduceLROnPlateau
-from torch.utils.data import DataLoader
+from torch.utils.data import DataLoader, TensorDataset
 import torch.optim as optim
 import torch.nn as nn
 from tqdm import tqdm
@@ -42,21 +42,32 @@ def load_test_datasets(test_path, batch_size):
     return test_loaders
 
 
-def evaluate_validation(net, val_data, val_labels, device, batch_size, cnn_mode):
+def evaluate_validation(net, val_loader, device, batch_size, cnn_mode):
     net.eval()
-    # StepSize = 512
-    embedding1 = EvaluateNet(net.module.GetChannelCnn(0, cnn_mode), val_data[:, :, :, :, 0], device,
-                             batch_size)
-    embedding2 = EvaluateNet(net.module.GetChannelCnn(1, cnn_mode), val_data[:, :, :, :, 1], device,
-                             batch_size)
-    dist = np.power(embedding1 - embedding2, 2).sum(1)
-    val_error = FPR95Accuracy(dist, val_labels) * 100
+    embeddings1 = []
+    embeddings2 = []
+    labels = []
+    for (data, batch_labels) in val_loader:
+        # StepSize = 512
+        embedding1 = EvaluateNet(net.module.GetChannelCnn(0, cnn_mode), data[:, :, :, :, 0], device,
+                                 batch_size)
+        embedding2 = EvaluateNet(net.module.GetChannelCnn(1, cnn_mode), data[:, :, :, :, 1], device,
+                                 batch_size)
+        embeddings1.append(embedding1)
+        embeddings2.append(embedding2)
+        labels.append(batch_labels)
+
+    embeddings1 = np.concatenate(embeddings1)
+    embeddings2 = np.concatenate(embeddings2)
+    labels = np.concatenate(labels)
+    dist = np.power(embeddings1 - embeddings2, 2).sum(1)
+    val_error = FPR95Accuracy(dist, labels) * 100
 
     # plt.hist(dist[np.where(val_labels==0)[0]], 10)
     # plt.hist(dist[np.where(val_labels==1)[0]], 10)
 
     # estimate fpr95 threshold
-    positives_indices = np.squeeze(np.asarray(np.where(val_labels == 1)))
+    positives_indices = np.squeeze(np.asarray(np.where(labels == 1)))
     curr_FPR95 = np.sort(dist[positives_indices])[int(0.95 * positives_indices.shape[0])]
     return curr_FPR95, val_error
 
@@ -67,36 +78,37 @@ def evaluate_test(net, test_loaders, device, cnn_mode, test_decimation, generato
         test_samples_amount = 0
         test_error = 0
         net.eval()
-        for dataset in test_loaders:
-            test_loader = test_loaders[dataset]
-            max_samples = int(len(test_loader) / test_decimation)
-            seen_samples = 0
-            embeddings1 = []
-            embeddings2 = []
-            labels = []
-            for _, (data, batch_labels) in enumerate(
-                    tqdm(test_loader, total=max_samples, desc=f'Test {test_loader.dataset.dataset_name}', position=1,
-                         leave=False)):
-                batch_size = data.shape[0]
-                embedding1 = EvaluateNet(net.module.GetChannelCnn(0, cnn_mode),
-                                         data[:, :, :, :, 0], device,
-                                         batch_size)
-                embedding2 = EvaluateNet(net.module.GetChannelCnn(1, cnn_mode),
-                                         data[:, :, :, :, 1], device,
-                                         batch_size)
-                embeddings1.append(embedding1)
-                embeddings2.append(embedding2)
-                labels.append(batch_labels)
-                seen_samples += batch_size
-                if seen_samples >= max_samples:
-                    break
-            embedding1 = np.concatenate(embeddings1)
-            embedding2 = np.concatenate(embeddings2)
-            labels = np.concatenate(labels)
-            dist = np.power(embedding1 - embedding2, 2).sum(1)
-            test_error = FPR95Accuracy(dist, labels) * 100
-            test_error += test_error * seen_samples
-            test_samples_amount += seen_samples
+        total = sum([int(len(test_loaders[dataset].dataset) / test_decimation) for dataset in test_loaders])
+        with tqdm(total=total, desc='Test', position=1, leave=False) as pbar:
+            for dataset in test_loaders:
+                test_loader = test_loaders[dataset]
+                max_samples = int(len(test_loader.dataset) / test_decimation)
+                seen_samples = 0
+                embeddings1 = []
+                embeddings2 = []
+                labels = []
+                for (data, batch_labels) in test_loader:
+                    batch_size = data.shape[0]
+                    embedding1 = EvaluateNet(net.module.GetChannelCnn(0, cnn_mode),
+                                             data[:, :, :, :, 0], device,
+                                             batch_size)
+                    embedding2 = EvaluateNet(net.module.GetChannelCnn(1, cnn_mode),
+                                             data[:, :, :, :, 1], device,
+                                             batch_size)
+                    embeddings1.append(embedding1)
+                    embeddings2.append(embedding2)
+                    labels.append(batch_labels)
+                    pbar.update(batch_size)
+                    seen_samples += batch_size
+                    if seen_samples >= max_samples:
+                        break
+                embedding1 = np.concatenate(embeddings1)
+                embedding2 = np.concatenate(embeddings2)
+                labels = np.concatenate(labels)
+                dist = np.power(embedding1 - embedding2, 2).sum(1)
+                test_error = FPR95Accuracy(dist, labels) * 100
+                test_error += test_error * seen_samples
+                test_samples_amount += seen_samples
         test_error /= test_samples_amount
 
         if (net.module.mode == 'Hybrid1') | (net.module.mode == 'Hybrid2'):
@@ -105,11 +117,11 @@ def evaluate_test(net, test_loaders, device, cnn_mode, test_decimation, generato
         return test_error
 
 
-def train(train_loader, val_data, val_labels, test_loaders, net, optimizer, criterion, scheduler, device,
+def train(train_loader, val_loader, test_loaders, epochs, net, optimizer, criterion, scheduler, device,
           start_epoch, grad_accumulation_steps, generator_mode, cnn_mode, FPR95, fpr_hard_negatives, fpr_max_images_num,
           batch_size, pairwise_triplets_batch_size, tb_writer, test_decimation, models_dir_name, best_file_name,
           out_fname, architecture_description, evaluate_every, lowest_error, skip_validation, skip_test):
-    for epoch in range(start_epoch, 80):
+    for epoch in range(start_epoch, epochs):
         running_loss = 0
         running_loss_ce = 0
         running_loss_pos = 0
@@ -220,7 +232,7 @@ def train(train_loader, val_data, val_labels, test_loaders, net, optimizer, crit
 
                 print_val_fpr = ''
                 if not skip_validation:
-                    curr_FPR95, val_error = evaluate_validation(net, val_data, val_labels, device, batch_size, cnn_mode)
+                    curr_FPR95, val_error = evaluate_validation(net, val_loader, device, batch_size, cnn_mode)
                     print_val_fpr = 'FPR95: ' + repr(curr_FPR95) + ' '
 
                 loss = running_loss / batch_num
@@ -251,7 +263,7 @@ def train(train_loader, val_data, val_labels, test_loaders, net, optimizer, crit
                 tb_writer.add_scalar('FPR95', FPR95, epoch * len(train_loader) + batch_num)
                 tb_writer.add_text('Text', str)
                 tb_writer.close()
-                break
+
 
         if not skip_test:
             test_error = evaluate_test(net, test_loaders, device, cnn_mode, test_decimation, generator_mode)
@@ -264,7 +276,7 @@ def train(train_loader, val_data, val_labels, test_loaders, net, optimizer, crit
                 lowest_error = test_error
 
                 tqdm.write(f'Best test error found and saved: {repr(lowest_error)[0:5]}')
-                filepath = os.path.join(models_dir_name, best_file_name + '.pth')
+                filepath = os.path.join(models_dir_name, best_file_name)
                 state = {'epoch': epoch,
                          'state_dict': net.module.state_dict(),
                          'optimizer': optimizer.state_dict(),
@@ -313,12 +325,14 @@ def load_trainval_dataset(trainval_dir, augmentations, generator_mode, batch_siz
     # get val data
     val_labels = torch.from_numpy(trainval_labels[val_indices])
     val_data = trainval_data[val_indices].astype(np.float32)
-
     # ShowTwoRowImages(np.squeeze(val_data[0:4, :, :, :, 0]), np.squeeze(val_data[0:4, :, :, :, 1]))
     # val_data = torch.from_numpy(val_data).float().cpu()
+
     val_data[:, :, :, :, 0] -= val_data[:, :, :, :, 0].mean()
     val_data[:, :, :, :, 1] -= val_data[:, :, :, :, 1].mean()
     val_data = torch.from_numpy(NormalizeImages(val_data))
+    val_dataset = TensorDataset(val_data, val_labels)
+    val_loader = DataLoader(val_dataset, batch_size=batch_size, num_workers=8)
 
     # train data
     train_data = np.squeeze(trainval_data[train_indices,])
@@ -328,14 +342,15 @@ def load_trainval_dataset(trainval_dir, augmentations, generator_mode, batch_siz
     train_dataset = PairwiseTriplets(train_data, train_labels, pairwise_triplets_batch_size, augmentations,
                                      generator_mode)
     train_loader = DataLoader(train_dataset, batch_size=batch_size, shuffle=True, num_workers=8)
-    return train_loader, val_data, val_labels
+
+    return train_loader, val_loader
 
 
-def load_checkpoint(models_dir_name, continue_from_best_model, net, optimizer):
+def load_checkpoint(models_dir_name, continue_from_best_model, best_file_name, net, optimizer):
     print('Continuing from checkpoint')
     if continue_from_best_model:
         print('Loading best model')
-        model_checkpoints = glob.glob(os.path.join(models_dir_name, "visnir_best.pth"))
+        model_checkpoints = glob.glob(os.path.join(models_dir_name, best_file_name))
     else:
         print('Loading last model')
         model_checkpoints = glob.glob(os.path.join(models_dir_name, "visnir*"))
@@ -350,6 +365,10 @@ def load_checkpoint(models_dir_name, continue_from_best_model, net, optimizer):
 
     net.load_state_dict(checkpoint['state_dict'], strict=True)
     optimizer.load_state_dict(checkpoint['optimizer'])
+    for state in optimizer.state.values():
+        for k, v in state.items():
+            if isinstance(v, torch.Tensor):
+                state[k] = v.cuda()
 
     start_epoch = checkpoint['epoch'] + 1
 
@@ -370,6 +389,7 @@ def assymetric_init(net):
 
 def parse_args():
     parser = argparse.ArgumentParser(description='Train models for multimodal patch matching.')
+    parser.add_argument('--epochs', type=int, default=80, help='epochs')
     parser.add_argument('--models', help='models path')
     parser.add_argument('--logs', help='logs path')
     parser.add_argument('--test', help='test data path')
@@ -377,26 +397,27 @@ def parse_args():
     parser.add_argument('--evaluate-every', type=int, default=1000, help='evaluate network and print steps')
     parser.add_argument('--skip-validation', type=bool, default=False, help='whether to skip validation evaluation')
     parser.add_argument('--skip-test', type=bool, default=False, help='whether to skip test evaluation')
-    parser.add_argument('--continue-from-checkpoint', type=bool, default=False,
-                        help='whether to continue training from checkpoint')
-    parser.add_argument('--continue-from-best-model', type=bool, default=True,
-                        help='whether to continue training using best model')
+    parser.add_argument('--continue-from-checkpoint', type=bool, const=True, default=False,
+                        nargs='?', help='whether to continue training from checkpoint')
+    parser.add_argument('--continue-from-best-model', type=bool, const=True, default=True,
+                        nargs='?', help='whether to continue training using best model')
+    parser.add_argument('--best-file-name', default='visnir_best.pth', help='best model file name')
     parser.add_argument('--batch-size', type=int, default=24, help='batch size')
     parser.add_argument('--pairs-triplets-batch-size', type=int, default=6, help='batch size of pairs/triplets')
     parser.add_argument('--lr', type=float, default=1e-4, help='batch size of pairs/triplets')
     parser.add_argument('--test-decimation', type=int, default=10, help='factor to reduce test size by')
+    parser.add_argument('--generator-mode', help='generator mode')
+    parser.add_argument('--cnn-mode', help='cnn mode')
 
     return parser.parse_args()
 
 
 def main():
-    freeze_support()
     args = parse_args()
     device = get_torch_device()
     models_dir_name = args.models
     tb_writer = SummaryWriter(args.logs)
     architecture_description = 'Symmetric CNN with Triplet loss, no HM'
-    best_file_name = 'visnir_best'
     out_fname = 'visnir_sym_triplet'
     # TrainFile = '/home/keller/Dropbox/multisensor/python/data/Vis-Nir_Train.mat'
     # TrainFile = './data/Vis-Nir_grid/Vis-Nir_grid_Train.hdf5'
@@ -424,10 +445,13 @@ def main():
     if args.skip_validation and args.skip_test:
         raise Exception('Cannot skip both validation and test')
 
-    if True:
-        # generator_mode = 'PairwiseRot'
-        generator_mode = 'Pairwise'
-        cnn_mode = 'PairwiseSymmetric'
+    best_file_name = args.best_file_name
+    generator_mode = args.generator_mode
+    cnn_mode = args.cnn_mode
+    if cnn_mode == 'PairwiseSymmetric':
+        # PairwiseSymmetric
+        # Pairwise/PairwiseRot
+
         # criterion = OnlineHardNegativeMiningTripletLoss(margin=1, Mode='Random')
         criterion = OnlineHardNegativeMiningTripletLoss(margin=1, Mode='Hardest')
         # criterion         = OnlineHardNegativeMiningTripletLoss(margin=1, Mode='MostHardest', HardRatio=1.0/8)
@@ -447,10 +471,10 @@ def main():
         freeze_asymmetric_cnn = True
 
         fpr_hard_negatives = False
+    elif cnn_mode == 'PairwiseAsymmetric':
+        # PairwiseAsymmetric
+        # Pairwise/PairwiseRot
 
-    if False:
-        generator_mode = 'Pairwise'
-        cnn_mode = 'PairwiseAsymmetric'
         # criterion     = OnlineHardNegativeMiningTripletLoss(margin=1, Mode='Random')
         criterion = OnlineHardNegativeMiningTripletLoss(margin=1, Mode='Hardest')
         # criterion = OnlineHardNegativeMiningTripletLoss(margin=1, Mode='HardPos', HardRatio=1.0/2, PosRatio=1. / 2)
@@ -469,11 +493,10 @@ def main():
         augmentations["RandomCrop"] = {'Do': True, 'MinDx': 0, 'MaxDx': 0.2, 'MinDy': 0, 'MaxDy': 0.2}
 
         architecture_description = 'PairwiseAsymmetric'
-    if False:
-        # generator_mode      = 'PairwiseRot'
-        generator_mode = 'Pairwise'
-        # cnn_mode            = 'HybridRot'
-        cnn_mode = 'Hybrid'
+    elif cnn_mode == 'Hybrid':
+        # Hybrid/HybridRot
+        # Pairwise/PairwiseRot
+
         # criterion           = OnlineHardNegativeMiningTripletLoss(margin=1, Mode='Random')
         # criterion           = OnlineHardNegativeMiningTripletLoss(margin=1, Mode='Hardest')
         criterion = OnlineHardNegativeMiningTripletLoss(margin=1, Mode='HardPos', HardRatio=1.0 / 2, PosRatio=1. / 2)
@@ -496,18 +519,17 @@ def main():
 
         fpr_max_images_num = 400
 
-        test_decimation = args.test_decimation # 20
+        test_decimation = args.test_decimation  # 20
 
-    train_loader, val_data, val_labels = load_trainval_dataset(args.trainval, augmentations, generator_mode, batch_size,
-                                                               pairwise_triplets_batch_size)
+    train_loader, val_loader = load_trainval_dataset(args.trainval, augmentations, generator_mode, batch_size,
+                                                     pairwise_triplets_batch_size)
     test_loaders = load_test_datasets(args.test, batch_size)
 
     net = MetricLearningCNN(cnn_mode)
     optimizer = torch.optim.Adam(net.parameters(), lr=lr, weight_decay=0)
     start_epoch = 0
-
     if args.continue_from_checkpoint:
-        start_epoch, lowest_error, loaded_FPR95 = load_checkpoint(models_dir_name, args.continue_from_best_model, net,
+        start_epoch, lowest_error, loaded_FPR95 = load_checkpoint(models_dir_name, args.continue_from_best_model, best_file_name, net,
                                                                   optimizer)
         if loaded_FPR95:
             FPR95 = loaded_FPR95
@@ -542,7 +564,7 @@ def main():
 
     scheduler = ReduceLROnPlateau(optimizer, mode='min', factor=0.5, patience=2, verbose=True)
 
-    train(train_loader, val_data, val_labels, test_loaders, net, optimizer, criterion, scheduler, device,
+    train(train_loader, val_loader, test_loaders, args.epochs, net, optimizer, criterion, scheduler, device,
           start_epoch, grad_accumulation_steps, generator_mode, cnn_mode, FPR95, fpr_hard_negatives, fpr_max_images_num,
           batch_size, pairwise_triplets_batch_size, tb_writer, test_decimation, models_dir_name, best_file_name,
           out_fname, architecture_description, args.evaluate_every, lowest_error, args.skip_validation,
@@ -550,4 +572,5 @@ def main():
 
 
 if __name__ == '__main__':
+    freeze_support()
     main()
