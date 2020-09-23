@@ -21,27 +21,27 @@ class HDF5Dataset(Dataset):
             print(f'Dataset {dataset_name} has no means cache file, calculating dataset means...')
             self.means = self.get_mean_image(h5_fpath)
             pickle.dump(self.means, open(means_cache_name, 'wb'))
+        with h5py.File(self.h5_fpath, 'r') as h5_file:
+            data = h5_file['Data']
+            self.len = len(data)
+            self.data = h5_file['Data'][:]
+            self.labels = h5_file['Labels'][:]
 
     def __getitem__(self, index):
-        with h5py.File(self.h5_fpath, 'r') as h5_file:
-            data = h5_file['Data']
-            labels = h5_file['Labels']
-            data = data[index]
-            label = labels[index]
+        data = self.data[index]
+        label = self.labels[index]
 
-            data = data.astype(np.float32)
-            label = torch.from_numpy(np.array(label, dtype=np.float32))
+        data = data.astype(np.float32)
+        label = torch.from_numpy(np.array(label, dtype=np.float32))
 
-            data -= self.means
+        data -= self.means
 
-            data = NormalizeImages(data)
-            data = torch.from_numpy(data)
-            return data, label
+        data = NormalizeImages(data)
+        data = torch.from_numpy(data)
+        return data, label
 
     def __len__(self):
-        with h5py.File(self.h5_fpath, 'r') as h5_file:
-            data = h5_file['Data']
-            return len(data)
+        return self.len
 
     def get_mean_image(self, fpath):
         """
