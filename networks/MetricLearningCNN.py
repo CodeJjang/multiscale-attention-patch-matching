@@ -7,7 +7,7 @@ from networks.ConvNet import ConvNet
 
 
 class MetricLearningCNN(nn.Module):
-    def __init__(self, mode):
+    def __init__(self, mode, use_gru):
         super(MetricLearningCNN, self).__init__()
 
         self.mode = mode
@@ -28,6 +28,12 @@ class MetricLearningCNN(nn.Module):
 
         self.fc2A = Linear(128 * 2, K)
         self.fc2B = Linear(K, 128)
+
+        self.use_gru = use_gru
+        if use_gru:
+            self.gru = nn.GRU(29 * 29, 29 * 29, num_layers=2, batch_first=True)
+            self.fc4 = Linear(29 * 29, 1)
+
 
     def separate_cnn_params(self, modules):
         all_parameters = modules.parameters()
@@ -110,11 +116,22 @@ class MetricLearningCNN(nn.Module):
             mode = self.mode
 
         if mode == 'PairwiseSymmetric':
-            # source#1: vis
-            output1 = self.netS(S1A)
-            output2 = self.netS(S1B)
-            # summary(self.netS, (1, 64, 64))
-
+            if self.use_gru:
+                output1 = self.netS(S1A, mode='NoFC') # (384, 128, 29, 29)
+                output2 = self.netS(S1B, mode='NoFC')
+                gru_output1, _ = self.gru(output1.reshape(output1.shape[0], output1.shape[1], -1))# (384, 128, 841), (2, 384, 841)
+                gru_output2, _ = self.gru(output2.reshape(output2.shape[0], output2.shape[1], -1))
+                gru_output1 = F.softmax(gru_output1, dim=2)
+                gru_output2 = F.softmax(gru_output2, dim=2)
+                output1 = gru_output1 * output1.reshape(*gru_output1.shape)
+                output2 = gru_output2 * output2.reshape(*gru_output2.shape)
+                output1 = self.fc4(output1).squeeze()
+                output2 = self.fc4(output2).squeeze()
+            else:
+                # source#1: vis
+                output1 = self.netS(S1A) # (384, 128)
+                output2 = self.netS(S1B)
+                # summary(self.netS, (1, 64, 64))
             Result = dict()
             Result['Emb1'] = output1
             Result['Emb2'] = output2

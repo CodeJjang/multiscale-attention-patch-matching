@@ -61,17 +61,19 @@ class ConvNet(nn.Module):
         for param in self.parameters():
             param.requires_grad = False
 
-    def forward(self, input1, Mode='Normalized'):
+    def forward(self, input1, mode='Normalized'):
         bs = input1.size(0)
         feat = self.block(self.input_norm(input1))
+
+        if mode == 'NoFC':
+            return feat # (batch, 128, 29, 29)
+
         spp_a = spatial_pyramid_pool(feat, bs, [int(feat.size(2)), int(feat.size(3))], self.output_num)
 
-        if Mode == 'NoFC':
-            return spp_a
 
         feature_a = self.fc1(spp_a).view(bs, -1)
 
-        if Mode == 'Normalized':
+        if mode == 'Normalized':
             return L2Norm()(feature_a)
         else:
             return feature_a

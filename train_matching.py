@@ -408,6 +408,8 @@ def parse_args():
     parser.add_argument('--test-decimation', type=int, default=10, help='factor to reduce test size by')
     parser.add_argument('--generator-mode', help='generator mode')
     parser.add_argument('--cnn-mode', help='cnn mode')
+    parser.add_argument('--use-gru', type=bool, const=True, default=False,
+                        nargs='?', help='whether to use GRU in network')
 
     return parser.parse_args()
 
@@ -452,8 +454,8 @@ def main():
         # PairwiseSymmetric
         # Pairwise/PairwiseRot
 
-        # criterion = OnlineHardNegativeMiningTripletLoss(margin=1, Mode='Random')
-        criterion = OnlineHardNegativeMiningTripletLoss(margin=1, Mode='Hardest')
+        criterion = OnlineHardNegativeMiningTripletLoss(margin=1, Mode='Random')
+        # criterion = OnlineHardNegativeMiningTripletLoss(margin=1, Mode='Hardest')
         # criterion         = OnlineHardNegativeMiningTripletLoss(margin=1, Mode='MostHardest', HardRatio=1.0/8)
         architecture_description = 'PairwiseSymmetric Hardest'
 
@@ -525,7 +527,7 @@ def main():
                                                      pairwise_triplets_batch_size)
     test_loaders = load_test_datasets(args.test, batch_size)
 
-    net = MetricLearningCNN(cnn_mode)
+    net = MetricLearningCNN(cnn_mode, args.use_gru)
     optimizer = torch.optim.Adam(net.parameters(), lr=lr, weight_decay=0)
     start_epoch = 0
     if args.continue_from_checkpoint:
