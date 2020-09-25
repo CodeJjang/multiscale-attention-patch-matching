@@ -33,7 +33,7 @@ MANIFEST
 *.manifest
 *.spec
 
-# Installer logs
+# Installer logs_symmetric
 pip-log.txt
 pip-delete-this-directory.txt
 
@@ -129,5 +129,4 @@ dmypy.json
 .pyre/
 original_files/
 .idea/
-logs/
-models/
+artifacts/
