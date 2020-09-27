@@ -4,6 +4,7 @@ import torch.nn as nn
 import torch.nn.functional as F
 from torch.nn import Linear, Dropout
 from networks.ConvNet import ConvNet
+from layers.L2Norm import L2Norm
 
 
 class MetricLearningCNN(nn.Module):
@@ -33,7 +34,6 @@ class MetricLearningCNN(nn.Module):
         if use_gru:
             self.gru = nn.GRU(29 * 29, 29 * 29, num_layers=2, batch_first=True)
             self.fc4 = Linear(29 * 29, 1)
-
 
     def separate_cnn_params(self, modules):
         all_parameters = modules.parameters()
@@ -106,6 +106,22 @@ class MetricLearningCNN(nn.Module):
         self.netAS1.freeze()
         self.netAS2.freeze()
 
+    def pairwise_symmetric_gru(self, S1A, S1B):
+        output1 = self.netS(S1A, mode='NoFC')  # (384, 128, 29, 29)
+        output2 = self.netS(S1B, mode='NoFC')
+        gru_output1, _ = self.gru(
+            output1.reshape(output1.shape[0], output1.shape[1], -1))  # (384, 128, 841), (2, 384, 841)
+        gru_output2, _ = self.gru(output2.reshape(output2.shape[0], output2.shape[1], -1))
+        gru_output1 = F.softmax(gru_output1, dim=2)
+        gru_output2 = F.softmax(gru_output2, dim=2)
+        output1 = gru_output1 * output1.reshape(*gru_output1.shape)
+        output2 = gru_output2 * output2.reshape(*gru_output2.shape)
+        output1 = self.fc4(output1).squeeze()
+        output2 = self.fc4(output2).squeeze()
+        output1 = L2Norm()(output1)
+        output2 = L2Norm()(output2)
+        return output1, output2
+
     # output CNN
     def forward(self, S1A, S1B=0, mode=-1, Rot1=0, Rot2=0, p=0.0):
 
@@ -117,19 +133,10 @@ class MetricLearningCNN(nn.Module):
 
         if mode == 'PairwiseSymmetric':
             if self.use_gru:
-                output1 = self.netS(S1A, mode='NoFC') # (384, 128, 29, 29)
-                output2 = self.netS(S1B, mode='NoFC')
-                gru_output1, _ = self.gru(output1.reshape(output1.shape[0], output1.shape[1], -1))# (384, 128, 841), (2, 384, 841)
-                gru_output2, _ = self.gru(output2.reshape(output2.shape[0], output2.shape[1], -1))
-                gru_output1 = F.softmax(gru_output1, dim=2)
-                gru_output2 = F.softmax(gru_output2, dim=2)
-                output1 = gru_output1 * output1.reshape(*gru_output1.shape)
-                output2 = gru_output2 * output2.reshape(*gru_output2.shape)
-                output1 = self.fc4(output1).squeeze()
-                output2 = self.fc4(output2).squeeze()
+                output1, output2 = self.pairwise_symmetric_gru(S1A, S1B)
             else:
                 # source#1: vis
-                output1 = self.netS(S1A) # (384, 128)
+                output1 = self.netS(S1A)  # (384, 128)
                 output2 = self.netS(S1B)
                 # summary(self.netS, (1, 64, 64))
             Result = dict()
