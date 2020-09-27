@@ -264,32 +264,31 @@ def train(train_loader, val_loader, test_loaders, epochs, net, optimizer, criter
                 tb_writer.add_text('Text', str)
                 tb_writer.close()
 
+                if not skip_test:
+                    test_error = evaluate_test(net, test_loaders, device, cnn_mode, test_decimation, generator_mode)
+                    if test_error is None:
+                        raise Exception('Test error after evaluation test is None')
 
-        if not skip_test:
-            test_error = evaluate_test(net, test_loaders, device, cnn_mode, test_decimation, generator_mode)
-            if test_error is None:
-                raise Exception('Test error after evaluation test is None')
+                    tb_writer.add_scalar('Test Error', test_error, epoch * len(train_loader) + batch_num)
+                    tqdm.write('Mean Test Error: ' + repr(test_error)[0:6])
+                    if test_error < lowest_error:
+                        lowest_error = test_error
 
-            tb_writer.add_scalar('Test Error', test_error, epoch * len(train_loader) + batch_num)
-            tqdm.write('Mean Test Error: ' + repr(test_error)[0:6])
-            if test_error < lowest_error:
-                lowest_error = test_error
-
-                tqdm.write(f'Best test error found and saved: {repr(lowest_error)[0:5]}')
-                filepath = os.path.join(models_dir_name, best_file_name)
-                state = {'epoch': epoch,
-                         'state_dict': net.module.state_dict(),
-                         'optimizer': optimizer.state_dict(),
-                         'Description': architecture_description,
-                         'LowestError': lowest_error,
-                         'OuterBatchSize': batch_size,
-                         'InnerBatchSize': pairwise_triplets_batch_size,
-                         'Mode': net.module.mode,
-                         'CnnMode': cnn_mode,
-                         'GeneratorMode': generator_mode,
-                         'Loss': criterion.mode,
-                         'FPR95': FPR95}
-                torch.save(state, filepath)
+                        tqdm.write(f'Best test error found and saved: {repr(lowest_error)[0:5]}')
+                        filepath = os.path.join(models_dir_name, best_file_name)
+                        state = {'epoch': epoch,
+                                 'state_dict': net.module.state_dict(),
+                                 'optimizer': optimizer.state_dict(),
+                                 'Description': architecture_description,
+                                 'LowestError': lowest_error,
+                                 'OuterBatchSize': batch_size,
+                                 'InnerBatchSize': pairwise_triplets_batch_size,
+                                 'Mode': net.module.mode,
+                                 'CnnMode': cnn_mode,
+                                 'GeneratorMode': generator_mode,
+                                 'Loss': criterion.mode,
+                                 'FPR95': FPR95}
+                        torch.save(state, filepath)
         else:
             # save epoch
             filepath = os.path.join(models_dir_name, f'{out_fname}_{epoch}.pth')
@@ -387,6 +386,11 @@ def assymetric_init(net):
     net.module.netAS2 = copy.deepcopy(net.module.netS)
 
 
+def assert_dirs(args):
+    os.makedirs(args.models, exist_ok=True)
+    os.makedirs(args.logs, exist_ok=True)
+
+
 def parse_args():
     parser = argparse.ArgumentParser(description='Train models for multimodal patch matching.')
     parser.add_argument('--epochs', type=int, default=80, help='epochs')
@@ -410,12 +414,16 @@ def parse_args():
     parser.add_argument('--cnn-mode', help='cnn mode')
     parser.add_argument('--use-gru', type=bool, const=True, default=False,
                         nargs='?', help='whether to use GRU in network')
-
+    parser.add_argument('--freeze-symmetric', type=bool, const=True, default=False,
+                        nargs='?', help='whether to freeze symmetric cnn')
+    parser.add_argument('--freeze-asymmetric', type=bool, const=True, default=False,
+                        nargs='?', help='whether to freeze asymmetric cnn')
     return parser.parse_args()
 
 
 def main():
     args = parse_args()
+    assert_dirs(args)
     device = get_torch_device()
     models_dir_name = args.models
     tb_writer = SummaryWriter(args.logs)
@@ -469,8 +477,8 @@ def main():
         augmentations["RandomCrop"] = {'Do': True, 'MinDx': 0, 'MaxDx': 0.2, 'MinDy': 0, 'MaxDy': 0.2}
         grad_accumulation_steps = 1
 
-        freeze_symmetric_cnn = False
-        freeze_asymmetric_cnn = True
+        freeze_symmetric_cnn = args.freeze_symmetric
+        freeze_asymmetric_cnn = args.freeze_asymmetric
 
         fpr_hard_negatives = False
     elif cnn_mode == 'PairwiseAsymmetric':
@@ -481,8 +489,8 @@ def main():
         criterion = OnlineHardNegativeMiningTripletLoss(margin=1, Mode='Hardest')
         # criterion = OnlineHardNegativeMiningTripletLoss(margin=1, Mode='HardPos', HardRatio=1.0/2, PosRatio=1. / 2)
 
-        freeze_symmetric_cnn = True
-        freeze_asymmetric_cnn = False
+        freeze_symmetric_cnn = args.freeze_symmetric
+        freeze_asymmetric_cnn = args.freeze_asymmetric
 
         lr = args.lr
         batch_size = args.batch_size
@@ -509,8 +517,8 @@ def main():
 
         fpr_hard_negatives = False
 
-        freeze_symmetric_cnn = True
-        freeze_asymmetric_cnn = False
+        freeze_symmetric_cnn = args.freeze_symmetric
+        freeze_asymmetric_cnn = args.freeze_asymmetric
 
         augmentations["Test"] = {'Do': False}
         augmentations["HorizontalFlip"] = True
@@ -531,7 +539,8 @@ def main():
     optimizer = torch.optim.Adam(net.parameters(), lr=lr, weight_decay=0)
     start_epoch = 0
     if args.continue_from_checkpoint:
-        start_epoch, lowest_error, loaded_FPR95 = load_checkpoint(models_dir_name, args.continue_from_best_model, best_file_name, net,
+        start_epoch, lowest_error, loaded_FPR95 = load_checkpoint(models_dir_name, args.continue_from_best_model,
+                                                                  best_file_name, net,
                                                                   optimizer)
         if loaded_FPR95:
             FPR95 = loaded_FPR95
