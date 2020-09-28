@@ -106,8 +106,8 @@ def evaluate_test(net, test_loaders, device, cnn_mode, test_decimation, generato
                 embedding2 = np.concatenate(embeddings2)
                 labels = np.concatenate(labels)
                 dist = np.power(embedding1 - embedding2, 2).sum(1)
-                test_error = FPR95Accuracy(dist, labels) * 100
-                test_error += test_error * seen_samples
+                dataset_test_error = FPR95Accuracy(dist, labels) * 100 * seen_samples
+                test_error += dataset_test_error
                 test_samples_amount += seen_samples
         test_error /= test_samples_amount
 
@@ -224,19 +224,19 @@ def train(train_loader, val_loader, test_loaders, epochs, net, optimizer, criter
                 running_loss /= evaluate_every / grad_accumulation_steps
                 running_loss_ce /= evaluate_every
                 scheduler.step(running_loss)
-                running_loss_neg /= evaluate_every
-                running_loss_pos /= evaluate_every
 
-                tqdm.write('running_loss_neg: ' + repr(100 * running_loss_neg)[0:5] + ' running_loss_pos: ' + repr(
-                    100 * running_loss_pos)[0:5])
+                if cnn_mode == 'Hybrid':
+                    running_loss_neg /= evaluate_every
+                    running_loss_pos /= evaluate_every
+                    tqdm.write('running_loss_neg: ' + repr(100 * running_loss_neg)[0:5] + ' running_loss_pos: ' + repr(
+                        100 * running_loss_pos)[0:5])
 
                 print_val_fpr = ''
                 if not skip_validation:
                     curr_FPR95, val_error = evaluate_validation(net, val_loader, device, batch_size, cnn_mode)
                     print_val_fpr = 'FPR95: ' + repr(curr_FPR95) + ' '
 
-                loss = running_loss / batch_num
-                tqdm.write(print_val_fpr + 'Loss: ' + repr(loss))
+                tqdm.write(print_val_fpr + 'Loss: ' + repr(running_loss))
 
                 if (net.module.mode == 'Hybrid1') | (net.module.mode == 'Hybrid2'):
                     net.module.mode = 'Hybrid'
@@ -264,32 +264,31 @@ def train(train_loader, val_loader, test_loaders, epochs, net, optimizer, criter
                 tb_writer.add_text('Text', str)
                 tb_writer.close()
 
+                if not skip_test:
+                    test_error = evaluate_test(net, test_loaders, device, cnn_mode, test_decimation, generator_mode)
+                    if test_error is None:
+                        raise Exception('Test error after evaluation test is None')
 
-        if not skip_test:
-            test_error = evaluate_test(net, test_loaders, device, cnn_mode, test_decimation, generator_mode)
-            if test_error is None:
-                raise Exception('Test error after evaluation test is None')
+                    tb_writer.add_scalar('Test Error', test_error, epoch * len(train_loader) + batch_num)
+                    tqdm.write('Mean Test Error: ' + repr(test_error)[0:6])
+                    if test_error < lowest_error:
+                        lowest_error = test_error
 
-            tb_writer.add_scalar('Test Error', test_error, epoch * len(train_loader) + batch_num)
-            tqdm.write('Mean Test Error: ' + repr(test_error)[0:6])
-            if test_error < lowest_error:
-                lowest_error = test_error
-
-                tqdm.write(f'Best test error found and saved: {repr(lowest_error)[0:5]}')
-                filepath = os.path.join(models_dir_name, best_file_name)
-                state = {'epoch': epoch,
-                         'state_dict': net.module.state_dict(),
-                         'optimizer': optimizer.state_dict(),
-                         'Description': architecture_description,
-                         'LowestError': lowest_error,
-                         'OuterBatchSize': batch_size,
-                         'InnerBatchSize': pairwise_triplets_batch_size,
-                         'Mode': net.module.mode,
-                         'CnnMode': cnn_mode,
-                         'GeneratorMode': generator_mode,
-                         'Loss': criterion.mode,
-                         'FPR95': FPR95}
-                torch.save(state, filepath)
+                        tqdm.write(f'Best test error found and saved: {repr(lowest_error)[0:5]}')
+                        filepath = os.path.join(models_dir_name, best_file_name)
+                        state = {'epoch': epoch,
+                                 'state_dict': net.module.state_dict(),
+                                 'optimizer': optimizer.state_dict(),
+                                 'Description': architecture_description,
+                                 'LowestError': lowest_error,
+                                 'OuterBatchSize': batch_size,
+                                 'InnerBatchSize': pairwise_triplets_batch_size,
+                                 'Mode': net.module.mode,
+                                 'CnnMode': cnn_mode,
+                                 'GeneratorMode': generator_mode,
+                                 'Loss': criterion.mode,
+                                 'FPR95': FPR95}
+                        torch.save(state, filepath)
         else:
             # save epoch
             filepath = os.path.join(models_dir_name, f'{out_fname}_{epoch}.pth')
@@ -387,6 +386,11 @@ def assymetric_init(net):
     net.module.netAS2 = copy.deepcopy(net.module.netS)
 
 
+def assert_dirs(args):
+    os.makedirs(args.models, exist_ok=True)
+    os.makedirs(args.logs, exist_ok=True)
+
+
 def parse_args():
     parser = argparse.ArgumentParser(description='Train models for multimodal patch matching.')
     parser.add_argument('--epochs', type=int, default=80, help='epochs')
@@ -414,6 +418,7 @@ def parse_args():
 
 def main():
     args = parse_args()
+    assert_dirs(args)
     device = get_torch_device()
     models_dir_name = args.models
     tb_writer = SummaryWriter(args.logs)
@@ -529,7 +534,8 @@ def main():
     optimizer = torch.optim.Adam(net.parameters(), lr=lr, weight_decay=0)
     start_epoch = 0
     if args.continue_from_checkpoint:
-        start_epoch, lowest_error, loaded_FPR95 = load_checkpoint(models_dir_name, args.continue_from_best_model, best_file_name, net,
+        start_epoch, lowest_error, loaded_FPR95 = load_checkpoint(models_dir_name, args.continue_from_best_model,
+                                                                  best_file_name, net,
                                                                   optimizer)
         if loaded_FPR95:
             FPR95 = loaded_FPR95
