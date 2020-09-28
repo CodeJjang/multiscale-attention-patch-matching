@@ -106,8 +106,8 @@ def evaluate_test(net, test_loaders, device, cnn_mode, test_decimation, generato
                 embedding2 = np.concatenate(embeddings2)
                 labels = np.concatenate(labels)
                 dist = np.power(embedding1 - embedding2, 2).sum(1)
-                test_error = FPR95Accuracy(dist, labels) * 100
-                test_error += test_error * seen_samples
+                dataset_test_error = FPR95Accuracy(dist, labels) * 100 * seen_samples
+                test_error += dataset_test_error
                 test_samples_amount += seen_samples
         test_error /= test_samples_amount
 
@@ -224,19 +224,19 @@ def train(train_loader, val_loader, test_loaders, epochs, net, optimizer, criter
                 running_loss /= evaluate_every / grad_accumulation_steps
                 running_loss_ce /= evaluate_every
                 scheduler.step(running_loss)
-                running_loss_neg /= evaluate_every
-                running_loss_pos /= evaluate_every
 
-                tqdm.write('running_loss_neg: ' + repr(100 * running_loss_neg)[0:5] + ' running_loss_pos: ' + repr(
-                    100 * running_loss_pos)[0:5])
+                if cnn_mode == 'Hybrid':
+                    running_loss_neg /= evaluate_every
+                    running_loss_pos /= evaluate_every
+                    tqdm.write('running_loss_neg: ' + repr(100 * running_loss_neg)[0:5] + ' running_loss_pos: ' + repr(
+                        100 * running_loss_pos)[0:5])
 
                 print_val_fpr = ''
                 if not skip_validation:
                     curr_FPR95, val_error = evaluate_validation(net, val_loader, device, batch_size, cnn_mode)
                     print_val_fpr = 'FPR95: ' + repr(curr_FPR95) + ' '
 
-                loss = running_loss / batch_num
-                tqdm.write(print_val_fpr + 'Loss: ' + repr(loss))
+                tqdm.write(print_val_fpr + 'Loss: ' + repr(running_loss))
 
                 if (net.module.mode == 'Hybrid1') | (net.module.mode == 'Hybrid2'):
                     net.module.mode = 'Hybrid'

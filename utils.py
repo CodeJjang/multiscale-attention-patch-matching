@@ -100,8 +100,6 @@ def FPR95Accuracy(dist, labels):
     fp = sum(negative_dist < recall_thresh)
 
     negatives = float(negative_dist.shape[0])
-    if negatives == 0:
-        return 0
     return fp / negatives
 
 
