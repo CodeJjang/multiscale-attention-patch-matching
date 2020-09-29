@@ -345,7 +345,7 @@ def load_trainval_dataset(trainval_dir, augmentations, generator_mode, batch_siz
     return train_loader, val_loader
 
 
-def load_checkpoint(models_dir_name, continue_from_best_model, best_file_name, net, optimizer):
+def load_checkpoint(models_dir_name, continue_from_best_model, best_file_name, net, optimizer, added_layers):
     print('Continuing from checkpoint')
     if continue_from_best_model:
         print('Loading best model')
@@ -362,12 +362,15 @@ def load_checkpoint(models_dir_name, continue_from_best_model, best_file_name, n
     checkpoint = torch.load(checkpoint_path)
     print(f'{checkpoint_path} loaded')
 
-    net.load_state_dict(checkpoint['state_dict'], strict=True)
-    optimizer.load_state_dict(checkpoint['optimizer'])
-    for state in optimizer.state.values():
-        for k, v in state.items():
-            if isinstance(v, torch.Tensor):
-                state[k] = v.cuda()
+    if added_layers:
+        net.load_state_dict(checkpoint['state_dict'], strict=False)
+    else:
+        net.load_state_dict(checkpoint['state_dict'], strict=True)
+        optimizer.load_state_dict(checkpoint['optimizer'])
+        for state in optimizer.state.values():
+            for k, v in state.items():
+                if isinstance(v, torch.Tensor):
+                    state[k] = v.cuda()
 
     start_epoch = checkpoint['epoch'] + 1
 
@@ -414,10 +417,14 @@ def parse_args():
     parser.add_argument('--cnn-mode', help='cnn mode')
     parser.add_argument('--use-gru', type=bool, const=True, default=False,
                         nargs='?', help='whether to use GRU in network')
+    parser.add_argument('--arch-version', type=int, help='version of architecture')
     parser.add_argument('--freeze-symmetric', type=bool, const=True, default=False,
                         nargs='?', help='whether to freeze symmetric cnn')
     parser.add_argument('--freeze-asymmetric', type=bool, const=True, default=False,
                         nargs='?', help='whether to freeze asymmetric cnn')
+    parser.add_argument('--added-layers', type=bool, const=True, default=False,
+                        nargs='?',
+                        help='whether we added new layers to last model (do not load optimizer state as it would fail)')
     return parser.parse_args()
 
 
@@ -462,8 +469,8 @@ def main():
         # PairwiseSymmetric
         # Pairwise/PairwiseRot
 
-        criterion = OnlineHardNegativeMiningTripletLoss(margin=1, Mode='Random')
-        # criterion = OnlineHardNegativeMiningTripletLoss(margin=1, Mode='Hardest')
+        # criterion = OnlineHardNegativeMiningTripletLoss(margin=1, Mode='Random')
+        criterion = OnlineHardNegativeMiningTripletLoss(margin=1, Mode='Hardest')
         # criterion         = OnlineHardNegativeMiningTripletLoss(margin=1, Mode='MostHardest', HardRatio=1.0/8)
         architecture_description = 'PairwiseSymmetric Hardest'
 
@@ -535,13 +542,14 @@ def main():
                                                      pairwise_triplets_batch_size)
     test_loaders = load_test_datasets(args.test, batch_size)
 
-    net = MetricLearningCNN(cnn_mode, args.use_gru)
+    net = MetricLearningCNN(cnn_mode, args.use_gru, args.arch_version)
     optimizer = torch.optim.Adam(net.parameters(), lr=lr, weight_decay=0)
     start_epoch = 0
     if args.continue_from_checkpoint:
         start_epoch, lowest_error, loaded_FPR95 = load_checkpoint(models_dir_name, args.continue_from_best_model,
                                                                   best_file_name, net,
-                                                                  optimizer)
+                                                                  optimizer,
+                                                                  args.added_layers)
         if loaded_FPR95:
             FPR95 = loaded_FPR95
 

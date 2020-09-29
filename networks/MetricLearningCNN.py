@@ -8,7 +8,7 @@ from layers.L2Norm import L2Norm
 
 
 class MetricLearningCNN(nn.Module):
-    def __init__(self, mode, use_gru):
+    def __init__(self, mode, use_gru, arch_version):
         super(MetricLearningCNN, self).__init__()
 
         self.mode = mode
@@ -32,8 +32,13 @@ class MetricLearningCNN(nn.Module):
 
         self.use_gru = use_gru
         if use_gru:
-            self.gru = nn.GRU(29 * 29, 29 * 29, num_layers=2, batch_first=True)
-            self.fc4 = Linear(29 * 29, 1)
+            self.gru_layers = 2
+            self.arch_version = arch_version
+            if arch_version == 1:
+                self.gru = nn.GRU(128, 128, num_layers=self.gru_layers, batch_first=True)
+            elif arch_version == 2:
+                self.gru = nn.GRU(128, 128, num_layers=self.gru_layers, batch_first=True)
+                self.fc4 = Linear(128, 1)
 
     def separate_cnn_params(self, modules):
         all_parameters = modules.parameters()
@@ -109,16 +114,29 @@ class MetricLearningCNN(nn.Module):
     def pairwise_symmetric_gru(self, S1A, S1B):
         output1 = self.netS(S1A, mode='NoFC')  # (384, 128, 29, 29)
         output2 = self.netS(S1B, mode='NoFC')
-        gru_output1, _ = self.gru(
-            output1.reshape(output1.shape[0], output1.shape[1], -1))  # (384, 128, 841), (2, 384, 841)
-        gru_output2, _ = self.gru(output2.reshape(output2.shape[0], output2.shape[1], -1))
-        gru_output1 = F.softmax(gru_output1, dim=2)
-        gru_output2 = F.softmax(gru_output2, dim=2)
-        output1 = gru_output1 * output1.reshape(*gru_output1.shape)
-        output2 = gru_output2 * output2.reshape(*gru_output2.shape)
-        output1 = self.fc4(output1).squeeze()
-        output2 = self.fc4(output2).squeeze()
-        output1 = L2Norm()(output1)
+        batch_size = output1.shape[0]
+        feature_size = output1.shape[1]
+        sequence_len = output1.shape[2] * output1.shape[3]
+        output1 = output1.reshape(batch_size, sequence_len, feature_size)
+        output2 = output2.reshape(batch_size, sequence_len, feature_size)
+        if self.arch_version == 1:
+            _, gru_last_output1 = self.gru(output1)
+            _, gru_last_output2 = self.gru(output2)
+            # Extract output of second layer
+            gru_last_output1 = gru_last_output1.reshape(self.gru_layers, -1, batch_size, feature_size)[1]
+            gru_last_output2 = gru_last_output2.reshape(self.gru_layers, -1, batch_size, feature_size)[1]
+            output1 = gru_last_output1.squeeze()
+            output2 = gru_last_output2.squeeze()
+        elif self.arch_version == 2:
+            gru_output1, _ = self.gru(output1)  # (384, 128, 841), (2, 384, 841)
+            gru_output2, _ = self.gru(output2)
+            gru_output1 = F.softmax(gru_output1, dim=2)
+            gru_output2 = F.softmax(gru_output2, dim=2)
+            output1 = gru_output1 * output1.reshape(*gru_output1.shape)
+            output2 = gru_output2 * output2.reshape(*gru_output2.shape)
+            output1 = self.fc4(output1).squeeze()
+            output2 = self.fc4(output2).squeeze()
+        output1 = L2Norm()(output1)  # (384, 128)
         output2 = L2Norm()(output2)
         return output1, output2
 
