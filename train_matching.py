@@ -414,7 +414,7 @@ def parse_args():
     parser.add_argument('--lr', type=float, default=1e-4, help='batch size of pairs/triplets')
     parser.add_argument('--test-decimation', type=int, default=10, help='factor to reduce test size by')
     parser.add_argument('--generator-mode', help='generator mode')
-    parser.add_argument('--cnn-mode', help='cnn mode')
+    parser.add_argument('--cnn-mode', help='cnn mode', choices=['PairwiseSymmetric', 'PairwiseAsymmetric', 'Hybrid'])
     parser.add_argument('--use-gru', type=bool, const=True, default=False,
                         nargs='?', help='whether to use GRU in network')
     parser.add_argument('--arch-version', type=int, help='version of architecture')
@@ -425,6 +425,9 @@ def parse_args():
     parser.add_argument('--added-layers', type=bool, const=True, default=False,
                         nargs='?',
                         help='whether we added new layers to last model (do not load optimizer state as it would fail)')
+    parser.add_argument('--ohem-mode', help='online hard example mining mode', choices=['random', 'hard'])
+    parser.add_argument('--take-best-current-model', type=bool, const=True, default=False,
+                        nargs='?', help='whether to ignore lowest_error from checkpoint and just take the best current model the run generates')
     return parser.parse_args()
 
 
@@ -469,8 +472,10 @@ def main():
         # PairwiseSymmetric
         # Pairwise/PairwiseRot
 
-        # criterion = OnlineHardNegativeMiningTripletLoss(margin=1, Mode='Random')
-        criterion = OnlineHardNegativeMiningTripletLoss(margin=1, Mode='Hardest')
+        if args.ohem_mode == 'random':
+            criterion = OnlineHardNegativeMiningTripletLoss(margin=1, Mode='Random')
+        elif args.ohem_mode == 'hard':
+            criterion = OnlineHardNegativeMiningTripletLoss(margin=1, Mode='Hardest')
         # criterion         = OnlineHardNegativeMiningTripletLoss(margin=1, Mode='MostHardest', HardRatio=1.0/8)
         architecture_description = 'PairwiseSymmetric Hardest'
 
@@ -492,8 +497,10 @@ def main():
         # PairwiseAsymmetric
         # Pairwise/PairwiseRot
 
-        # criterion     = OnlineHardNegativeMiningTripletLoss(margin=1, Mode='Random')
-        criterion = OnlineHardNegativeMiningTripletLoss(margin=1, Mode='Hardest')
+        if args.ohem_mode == 'random':
+            criterion = OnlineHardNegativeMiningTripletLoss(margin=1, Mode='Random')
+        elif args.ohem_mode == 'hard':
+            criterion = OnlineHardNegativeMiningTripletLoss(margin=1, Mode='Hardest')
         # criterion = OnlineHardNegativeMiningTripletLoss(margin=1, Mode='HardPos', HardRatio=1.0/2, PosRatio=1. / 2)
 
         freeze_symmetric_cnn = args.freeze_symmetric
@@ -514,9 +521,12 @@ def main():
         # Hybrid/HybridRot
         # Pairwise/PairwiseRot
 
-        # criterion           = OnlineHardNegativeMiningTripletLoss(margin=1, Mode='Random')
-        # criterion           = OnlineHardNegativeMiningTripletLoss(margin=1, Mode='Hardest')
-        criterion = OnlineHardNegativeMiningTripletLoss(margin=1, Mode='HardPos', HardRatio=1.0 / 2, PosRatio=1. / 2)
+        if args.ohem_mode == 'random':
+            criterion = OnlineHardNegativeMiningTripletLoss(margin=1, Mode='Random')
+        elif args.ohem_mode == 'hard':
+            # criterion = OnlineHardNegativeMiningTripletLoss(margin=1, Mode='Hardest')
+            criterion = OnlineHardNegativeMiningTripletLoss(margin=1, Mode='HardPos', HardRatio=1.0 / 2,
+                                                            PosRatio=1. / 2)
         # HardestCriterion = OnlineHardNegativeMiningTripletLoss(margin=1, Mode='Hardest')
         batch_size = args.batch_size  # was 16
         pairwise_triplets_batch_size = args.pairs_triplets_batch_size  # was 48
@@ -550,6 +560,9 @@ def main():
                                                                   best_file_name, net,
                                                                   optimizer,
                                                                   args.added_layers)
+        if args.take_best_current_model:
+            print('Taking best current model, ignoring previous lowest_error...')
+            lowest_error = 1e10
         if loaded_FPR95:
             FPR95 = loaded_FPR95
 
