@@ -1,0 +1,12 @@
+.gitattributes
+.git/
+models/
+models*/
+best models/
+logs*/
+*.pyc
+*.h5
+data/
+detection/
+*.rar
+
