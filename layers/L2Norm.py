@@ -7,7 +7,7 @@ class L2Norm(nn.Module):
         super(L2Norm, self).__init__()
         self.eps = 1e-10
 
-    def forward(self, x):
-        norm = torch.sqrt(torch.sum(x * x, dim=-1) + self.eps)
+    def forward(self, x, dim=-1):
+        norm = torch.sqrt(torch.sum(x * x, dim=dim) + self.eps)
         x = x / norm.unsqueeze(-1).expand_as(x)
         return x
