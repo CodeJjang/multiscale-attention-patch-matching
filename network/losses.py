@@ -3,6 +3,7 @@ import torch.nn as nn
 import torch.nn.functional as F
 import numpy as np
 import matplotlib.pyplot as plt
+from termcolor import colored
 
 from network.my_classes import EvaluateDualNets,FPR95Threshold
 
@@ -143,7 +144,7 @@ class OnlineTripletLoss(nn.Module):
 
 
 
-def HardTrainingLoss(net, pos1, pos2,PosRatio,HardRatio,T,device):
+def HardTrainingLoss(net, pos1, pos2,PosRatio,MarginRatio,T,device):
 
     net.eval()
     with torch.no_grad():
@@ -172,7 +173,7 @@ def HardTrainingLoss(net, pos1, pos2,PosRatio,HardRatio,T,device):
         Idx = margin.argsort(dim=-1, descending=True)
 
         # retain a subset of hard examples
-        Idx = Idx[0:int(HardRatio * Idx.shape[0])]
+        Idx = Idx[0:int(MarginRatio * Idx.shape[0])]
 
         PosIdx = PosIdx[Idx]
         NegIdx = NegIdx[Idx]
@@ -228,21 +229,22 @@ class OnlineHardNegativeMiningTripletLoss(nn.Module):
     triplets
     """
 
-    def __init__(self, margin,Mode,HardRatio=1,PosRatio=1,NegPow=1,PosPow=1):
+    def __init__(self, margin,Mode,MarginRatio=1,PosRatio=1,NegPow=1,PosPow=1,device=None):
         super(OnlineHardNegativeMiningTripletLoss, self).__init__()
         self.margin    = margin
         self.Mode      = Mode
-        self.HardRatio = HardRatio
+        self.MarginRatio = MarginRatio
         self.PosRatio  = PosRatio
         self.PosPow    = PosPow
         self.NegPow    = NegPow
+        self.device    = device
 
 
     def forward(self, emb1, emb2):
 
 
         if self.Mode == 'Random':
-            NegIdx = np.random.randint(emb1.shape[0], size=emb1.shape[0])
+            NegIdx = torch.randint(high=emb1.shape[0], size=(emb1.shape[0],),device=self.device)
             ap_distances = (emb1 - emb2).pow(2).sum(1)  # .pow(.5)
             an_distances = (emb1 - emb2[NegIdx, :]).pow(2).sum(1)  # .pow(.5)
             margin = ap_distances - an_distances
@@ -250,16 +252,17 @@ class OnlineHardNegativeMiningTripletLoss(nn.Module):
 
         if (self.Mode == 'Hardest')  | (self.Mode == 'HardPos'):
             #Dist  = sim_matrix(emb1,emb2).cpu().detach()
-            Similarity = torch.mm(emb1, emb2.transpose(0, 1)).cpu()
-            Similarity -= 1000000000*torch.eye(n=Similarity.shape[0],m=Similarity.shape[1])
-            NegIdx = torch.argmax(Similarity, axis=1).detach()
+            Similarity = torch.mm(emb1, emb2.transpose(0, 1))
+            Similarity -= 1000000000*torch.eye(n=Similarity.shape[0],m=Similarity.shape[1],device=self.device)
+            NegIdx = torch.argmax(Similarity, axis=1) #find negative with highest similarity
 
 
 
 
         if (self.Mode == 'Hardest') :
 
-            ap_distances = (emb1 - emb2[0:emb1.shape[0],:]).pow(2).sum(1)  # .pow(.5)
+            #ap_distances = (emb1 - emb2[0:emb1.shape[0],:]).pow(2).sum(1)  # .pow(.5)
+            ap_distances = (emb1 - emb2).pow(2).sum(1)  # .pow(.5)
             an_distances = (emb1 - emb2[NegIdx,:]).pow(2).sum(1)
 
             margin = ap_distances - an_distances
@@ -269,33 +272,41 @@ class OnlineHardNegativeMiningTripletLoss(nn.Module):
 
         if (self.Mode == 'HardPos'):
 
-            ap_distances = (emb1 - emb2[0:emb1.shape[0],:,]).pow(2).sum(1)  # .pow(.5)
+            #ap_distances = (emb1 - emb2[0:emb1.shape[0],:,]).pow(2).sum(1)  # .pow(.5)
+            ap_distances = (emb1 - emb2).pow(2).sum(1)  # .pow(.5)
             an_distances = (emb1 - emb2[NegIdx, :]).pow(2).sum(1)
 
             #get LARGEST positive distances
-            PosIdx = ap_distances.argsort(dim=-1, descending=True)
-            PosIdx = PosIdx[0:int(self.PosRatio * PosIdx.shape[0])]
+            PosIdx = ap_distances.argsort(dim=-1, descending=True)#sort positive distances
+            PosIdx = PosIdx[0:int(self.PosRatio * PosIdx.shape[0])]#retain only self.PosRatio of the positives 
 
             NegIdx=NegIdx[PosIdx]
 
             margin = ap_distances[PosIdx] - an_distances[PosIdx]
 
-            # hard examples first
+            # hard examples first: sort margin
             Idx = margin.argsort(dim=-1, descending=True)
 
             # retain a subset of hard examples
-            Idx = Idx[0:int(self.HardRatio * Idx.shape[0])]
-
-            NegIdx = NegIdx[Idx]
-            PosIdx = PosIdx[Idx]
+            Idx = Idx[0:int(self.MarginRatio * Idx.shape[0])]#retain some of the examples
 
             margin = margin[Idx]
 
-        losses = F.relu(margin + self.margin).mean()
+        losses = F.relu(margin + self.margin)
+        idx = torch.where(losses>0)[0]
 
-        if torch.isnan(losses):
-            print('Found nan in loss ')
+        if idx.size()[0]>0:
+            losses = losses[idx].mean()
 
+            if torch.isnan(losses):
+                print('Found nan in loss ')
+        else:
+            losses = 0
+            print(colored('\n No margin samples', 'magenta', attrs=['reverse', 'blink']))
+            #self.margin *= 1.1
+            print(colored('\n New margin = '+repr(self.margin)[0:4], 'magenta', attrs=['reverse', 'blink']))
+
+        #return losses, idx.size()[0]/margin.shape[0]
         return losses
 
 

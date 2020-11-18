@@ -27,7 +27,7 @@ class L1Norm(nn.Module):
         super(L1Norm,self).__init__()
         self.eps = 1e-10
     def forward(self, x):
-        norm = torch.sum(torch.abs(x), dim = 1) + self.eps
+        norm = torch.sum(torch.aBatchSize(x), dim = 1) + self.eps
         x= x / norm.expand_as(x)
         return x
 
@@ -41,6 +41,9 @@ class Model(nn.Module):
 
     def __init__(self):
         super(Model, self).__init__()
+
+        self.MaxPool2 = nn.MaxPool2d(kernel_size = 2, stride=2)
+        self.MaxPool4 = nn.MaxPool2d(kernel_size=4, stride=4)
 
         self.block = nn.Sequential(
             nn.Conv2d(1, 32, kernel_size=3, padding=1, bias=False),
@@ -67,7 +70,7 @@ class Model(nn.Module):
             nn.BatchNorm2d(128, affine=False),
             nn.ReLU(),
 
-            nn.Conv2d(128, 128, kernel_size=3, stride=1, padding=1, bias=False),  # bs, 128,8,8
+            nn.Conv2d(128, 128, kernel_size=3, stride=1, padding=1, bias=False),  # BatchSize, 128,8,8
             nn.BatchNorm2d(128, affine=False),
             nn.ReLU(),
 
@@ -76,9 +79,11 @@ class Model(nn.Module):
         )
 
         self.output_num = [8, 4, 2, 1]
+        self.output_num = [8]
 
         self.fc1 = nn.Sequential(
-            nn.Linear(10880, 128),
+            #nn.Linear(10880, 128),
+            nn.Linear(8192, 128),
         )
 
         return
@@ -96,22 +101,34 @@ class Model(nn.Module):
             param.requires_grad = not OnOff
 
 
-    def forward(self, input1,Mode = 'Normalized',DropoutP=0):
-        bs = input1.size(0)
+    def FreezeBlock(self, OnOff):
+        for param in self.block.parameters():
+            param.requires_grad = not OnOff
+
+
+    def forward(self, input1,Mode = 'Normalized',ActivMode =False,DropoutP=0):
+        BatchSize = input1.size(0)
         feat = self.block(self.input_norm(input1))
-        spp_a = spatial_pyramid_pool(feat, bs, [int(feat.size(2)), int(feat.size(3))], self.output_num)
+        spp_a = spatial_pyramid_pool(feat, BatchSize, [int(feat.size(2)), int(feat.size(3))], self.output_num)
 
         if Mode == 'NoFC':
             return spp_a
 
         spp_a = Dropout(DropoutP)(spp_a)  # 20% probability
 
-        feature_a = self.fc1(spp_a).view(bs, -1)
+        feature_a = self.fc1(spp_a).view(BatchSize, -1)
 
         if Mode ==  'Normalized':
-            return L2Norm()(feature_a)
+            #return L2Norm()(feature_a)
+            if ActivMode:
+                return F.normalize(feature_a, dim=1, p=2),feat
+            else:
+                return F.normalize(feature_a, dim=1, p=2)
         else:
-            return feature_a
+            if ActivMode:
+                return feature_a,feat
+            else:
+                return feature_a
 
 
 def weights_init(m):

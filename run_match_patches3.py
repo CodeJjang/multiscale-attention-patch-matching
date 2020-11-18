@@ -1,6 +1,7 @@
 import torch
 import torchvision
 import matplotlib.pyplot as plt
+from termcolor import colored
 import numpy as np
 import glob
 import os
@@ -24,7 +25,7 @@ from network.losses import InnerProduct, FindFprTrainingSet, FPRLoss, PairwiseLo
 from network.losses import Compute_FPR_HardNegatives, ComputeFPR
 
 from util.read_matlab_imdb import read_matlab_imdb
-from util.utils import LoadModel
+from util.utils import LoadModel,MultiEpochsDataLoader
 
 import warnings
 warnings.filterwarnings("ignore", message="UserWarning: albumentations.augmentations.transforms.RandomResizedCrop")
@@ -76,36 +77,47 @@ if __name__ == '__main__':
     AssymetricInitializationPhase = False
 
     TestMode = False
+    TestDecimation = 10
 
-    if False:
-        # GeneratorMode = 'PairwiseRot'
+    FreezeSymmetricBlock = False
+
+    if True:
         GeneratorMode = 'Pairwise'
         CnnMode = 'PairwiseSymmetric'
+        CnnMode = 'PairwiseSymmetricAttention'
         NegativeMiningMode = 'Random'
         #NegativeMiningMode = 'Hardest'
         #NegativeMiningMode = 'HardPos'
-        criterion = OnlineHardNegativeMiningTripletLoss(margin=1, Mode=NegativeMiningMode)
-        #criterion         = OnlineHardNegativeMiningTripletLoss(margin=1, Mode='HardPos', HardRatio=0.5)
-        #criterion = OnlineHardNegativeMiningTripletLoss(margin=1, Mode='HardPos', HardRatio=1.0/2, PosRatio=1. / 2)
+        criterion = OnlineHardNegativeMiningTripletLoss(margin=1, Mode=NegativeMiningMode,device=device)
+        #criterion         = OnlineHaOnlineHardNegativeMiningTripletLossrdNegativeMiningTripletLoss(margin=1, Mode='HardPos', MarginRatio=0.5)
+        #criterion = OnlineHardNegativeMiningTripletLoss(margin=1, Mode='HardPos', MarginRatio=1.0/2, PosRatio=1. / 2)
         Description = 'PairwiseSymmetric Hardest'
 
-        InitializeOptimizer = False
-        UseWarmUp           = False
-        LearningRate = 1e-2
+        InitializeOptimizer = True
+        UseWarmUp           = True
+
+        StartBestModel      = False
+        UseBestScore        = False
+
+        LearningRate =  1e-1
 
         weight_decay = 0#1e-5
-        DropoutP = 0.1
+        DropoutP = 0.5
 
-        OuterBatchSize = 12
-        InnerBatchSize = 12
+        OuterBatchSize = 4*12
+        InnerBatchSize = 2*12
         Augmentation["Test"] = {'Do': False}
         Augmentation["HorizontalFlip"] = True
         Augmentation["VerticalFlip"] = True
         Augmentation["Rotate90"] = True
         Augmentation["RandomCrop"] = {'Do': True, 'MinDx': 0, 'MaxDx': 0.2, 'MinDy': 0, 'MaxDy': 0.2}
 
-        FreezeSymmetricCnn = False
+
+        FreezeSymmetricCnn  = False
+        FreezeSymmetricBlock = False
+
         FreezeAsymmetricCnn = True
+
 
         FprHardNegatives = False
 
@@ -118,14 +130,15 @@ if __name__ == '__main__':
         NegativeMiningMode = 'Random'
         #NegativeMiningMode = 'Hardest'
         criterion = OnlineHardNegativeMiningTripletLoss(margin=1, Mode=NegativeMiningMode)
-        # criterion = OnlineHardNegativeMiningTripletLoss(margin=1, Mode='HardPos', HardRatio=1.0/2, PosRatio=1. / 2)
+        # criterion = OnlineHardNegativeMiningTripletLoss(margin=1, Mode='HardPos', MarginRatio=1.0/2, PosRatio=1. / 2)
 
         InitializeOptimizer = False
+        UseWarmUp           = True
         StartBestModel      = False
         UseBestScore        = True
 
-        FreezeSymmetricCnn  = True
-        FreezeAsymmetricCnn = False
+        FreezeSymmetricCnn   = True
+        FreezeAsymmetricCnn  = False
 
         LearningRate = 1e-1
         OuterBatchSize = 24;
@@ -146,18 +159,17 @@ if __name__ == '__main__':
         Description = 'PairwiseAsymmetric'
 
 
-    if True:
-        # GeneratorMode      = 'PairwiseRot'
+    if False:
         GeneratorMode = 'Pairwise'
         # CnnMode            = 'HybridRot'
         CnnMode = 'Hybrid'
 
-        criterion = OnlineHardNegativeMiningTripletLoss(margin=1, Mode="Random")
-        #criterion = OnlineHardNegativeMiningTripletLoss(margin=1, Mode="Hardest")
-        #criterion        = OnlineHardNegativeMiningTripletLoss(margin=1, Mode='HardPos', HardRatio=1.0/4, PosRatio=1./4)
+        criterion = OnlineHardNegativeMiningTripletLoss(margin=1, Mode="Random",device=device)
+        #criterion = OnlineHardNegativeMiningTripletLoss(margin=1, Mode="Hardest",device=device)
+        #criterion        = OnlineHardNegativeMiningTripletLoss(margin=1, Mode='HardPos', MarginRatio=1.0/4, PosRatio=1./4)
         #HardestCriterion = OnlineHardNegativeMiningTripletLoss(margin=1, Mode='Hardest')
 
-        #criterion = OnlineHardNegativeMiningTripletLoss(margin=1, Mode='HardPos', HardRatio=1.0 / 2, PosRatio=1. / 2)
+        #criterion = OnlineHardNegativeMiningTripletLoss(margin=1, Mode='HardPos', MarginRatio=1.0 / 2, PosRatio=1. / 2,device=device)
 
         PairwiseLoss      = PairwiseLoss()
 
@@ -166,17 +178,18 @@ if __name__ == '__main__':
         StartBestModel = False
         UseBestScore = False
 
-        OuterBatchSize = 24  # 24
-        InnerBatchSize = 36  # 24
-        LearningRate =  1e-1
-        DropoutP = 0#0.5
+        OuterBatchSize = 12*2#24  # 24
+        InnerBatchSize = 12*2#24  # 24
+        LearningRate =  0#1e-1
+        DropoutP = 0.0
         weight_decay= 0#1e-5
 
-        FprHardNegatives = False
-        StartBestModel = False
-        UseBestScore = True
+        TestMode = False
+        TestDecimation = 10
 
-        FreezeSymmetricCnn  = True
+        FprHardNegatives = False
+
+        FreezeSymmetricCnn  = False
         FreezeAsymmetricCnn = False
 
         AssymetricInitializationPhase = False
@@ -189,10 +202,8 @@ if __name__ == '__main__':
 
 
         MaxNoImages = 400
-        TestDecimation = 10
 
 
-    ContinueMode = True
 
 
     # ----------------------------- read data----------------------------------------------
@@ -200,34 +211,38 @@ if __name__ == '__main__':
     TrainingSetData = Data['Data']
     TrainingSetLabels = np.squeeze(Data['Labels'])
     TrainingSetSet = np.squeeze(Data['Set'])
-
     del Data
 
-    # ShowTwoImages(TrainingSetData[0:3, :, :, 0])
-    # ShowTwoRowImages(TrainingSetData[0:3, :, :, 0], TrainingSetData[0:3, :, :, 1])
 
     TrainIdx = np.squeeze(np.asarray(np.where(TrainingSetSet == 1)))
     ValIdx = np.squeeze(np.asarray(np.where(TrainingSetSet == 3)))
 
-    # get val data
+    # VALIDATION data
     ValSetLabels = torch.from_numpy(TrainingSetLabels[ValIdx])
-    ValSetData = TrainingSetData[ValIdx, :, :, :].astype(np.float32)
 
-    # ShowTwoRowImages(np.squeeze(ValSetData[0:4, :, :, :, 0]), np.squeeze(ValSetData[0:4, :, :, :, 1]))
-    # ValSetData = torch.from_numpy(ValSetData).float().cpu()
+    ValSetData = TrainingSetData[ValIdx, :, :, :].astype(np.float32)
     ValSetData[:, :, :, :, 0] -= ValSetData[:, :, :, :, 0].mean()
     ValSetData[:, :, :, :, 1] -= ValSetData[:, :, :, :, 1].mean()
     ValSetData = torch.from_numpy(NormalizeImages(ValSetData));
 
-    # train data
+
+
+
+
+    # TRAINING data
     TrainingSetData = np.squeeze(TrainingSetData[TrainIdx,])
     TrainingSetLabels = TrainingSetLabels[TrainIdx]
 
     # define generators
-    Training_Dataset   = DatasetPairwiseTriplets(TrainingSetData, TrainingSetLabels, InnerBatchSize, Augmentation,GeneratorMode)
-    Training_DataLoader = data.DataLoader(Training_Dataset, batch_size=OuterBatchSize, shuffle=True,num_workers=8,pin_memory=True)
+    Training_Dataset = DatasetPairwiseTriplets(TrainingSetData, TrainingSetLabels, InnerBatchSize, Augmentation, GeneratorMode)
+    # Training_DataLoader = data.DataLoader(Training_Dataset, batch_size=OuterBatchSize, shuffle=True,num_workers=8,pin_memory=True)
+    Training_DataLoader = MultiEpochsDataLoader(Training_Dataset, batch_size=OuterBatchSize, shuffle=True,
+                                                num_workers=8, pin_memory=True)
 
-    # Load all datasets
+
+
+
+    # Load all TEST datasets
     FileList = glob.glob(TestDir + "*.hdf5")
     TestData = dict()
     for File in FileList:
@@ -254,17 +269,23 @@ if __name__ == '__main__':
         del x
     # ------------------------------------------------------------------------------------------
 
+
+
+
     # -------------------------    loading previous results   ------------------------
     net = MetricLearningCnn(CnnMode,DropoutP)
     optimizer = torch.optim.Adam(net.parameters(), lr=LearningRate)
 
 
     StartEpoch = 0
-    if ContinueMode:
-        net,optimizer,LowestError,StartEpoch,scheduler =  LoadModel(net, StartBestModel, ModelsDirName, BestFileName, UseBestScore, device)
+
+    net,optimizer,LowestError,StartEpoch,scheduler,LodedNegativeMiningMode =  LoadModel(net, StartBestModel, ModelsDirName, BestFileName, UseBestScore, device)
+    print('LodedNegativeMiningMode: ' + LodedNegativeMiningMode)
 
     # -------------------------------------  freeze layers --------------------------------------
     net.FreezeSymmetricCnn(FreezeSymmetricCnn)
+    net.FreezeSymmetricBlock(FreezeSymmetricBlock)
+
     net.FreezeAsymmetricCnn(FreezeAsymmetricCnn)
     # ------------------------------------------------------------------------------------------
 
@@ -299,9 +320,12 @@ if __name__ == '__main__':
     scheduler = ReduceLROnPlateau(optimizer, mode='min', factor=0.1, patience=3, verbose=True)
     #LRscheduler =  StepLR(optimizer, step_size=10, gamma=0.1)
 
-    WarmUpEpochs = 4
+
     if UseWarmUp:
+        WarmUpEpochs = 4
         scheduler_warmup = GradualWarmupSchedulerV2(optimizer, multiplier=1, total_epoch=WarmUpEpochs, after_scheduler= StepLR(optimizer, step_size=10, gamma=0.1))
+    else:
+        WarmUpEpochs = 0
 
     InnerProductLoss = InnerProduct()
     CeLoss = nn.CrossEntropyLoss()
@@ -313,14 +337,18 @@ if __name__ == '__main__':
     # writer.add_graph(net, images)
     for epoch in range(StartEpoch, 1000):  # loop over the dataset multiple times
 
-        running_loss_ce = 0
         running_loss_pos = 0
         running_loss_neg = 0
         optimizer.zero_grad()
 
+        print('\n' + colored('Gain1 = ' +repr(net.module.Gain1.item())[0:6], 'cyan', attrs=['reverse', 'blink']))
+        print('\n' + colored('Gain2 = ' +repr(net.module.Gain2.item())[0:6], 'cyan', attrs=['reverse', 'blink']))
+
+
         #warmup
         if InitializeOptimizer and (epoch - StartEpoch < WarmUpEpochs) and UseWarmUp:
-            print('\n Warmup step #' + repr(epoch - StartEpoch))
+            print(colored('\n Warmup step #' + repr(epoch - StartEpoch), 'green', attrs=['reverse', 'blink']))
+            #print('\n Warmup step #' + repr(epoch - StartEpoch))
             scheduler_warmup.step()
         else:
             if epoch > StartEpoch:
@@ -338,38 +366,39 @@ if __name__ == '__main__':
         str = '\n LR: '
         for param_group in optimizer.param_groups:
             str += repr(param_group['lr']) + ' '
-        print(str)
+        print(colored(str, 'blue', attrs=['reverse', 'blink']))
 
         print('FreezeSymmetricCnn  = ' + repr(FreezeSymmetricCnn) + '\nFreezeAsymmetricCnn = '+repr(FreezeAsymmetricCnn) + '\n')
         print('NegativeMiningMode='+criterion.Mode)
 
-        Case1 = (criterion.Mode == 'Random') and (optimizer.param_groups[0]['lr'] <= 1e-4) and (epoch-StartEpoch>WarmUpEpochs)
-        Case2 = (CnnMode == 'Hybrid') and (criterion.Mode == 'Hardest') and (optimizer.param_groups[0]['lr'] <= 1e-5) and (FreezeSymmetricCnn==True)
+        Case1 = (criterion.Mode == 'Random') and (optimizer.param_groups[0]['lr'] <= (1e-4 + 1e-8)) and (epoch-StartEpoch>WarmUpEpochs)
+        Case2 = (CnnMode == 'Hybrid') and (criterion.Mode == 'Hardest') and (optimizer.param_groups[0]['lr'] <= (1e-4 +1e-8)) and (FreezeSymmetricCnn==True)
         if Case1 or Case2:
             if Case1:
-                print('Switching Random->Hardest')
-                criterion = OnlineHardNegativeMiningTripletLoss(margin=1, Mode = 'Hardest')
+                #print('Switching Random->Hardest')
+                print(colored('Switching Random->Hardest', 'green', attrs=['reverse', 'blink']))
+                criterion = OnlineHardNegativeMiningTripletLoss(margin=1, Mode = 'Hardest',device=device)
 
-                if CnnMode == 'Hybrid':
-                    LearningRate = 1e-1
-                    optimizer = torch.optim.Adam(
-                        [{'params': filter(lambda p: p.requires_grad == True, net.parameters()), 'lr': LearningRate,
-                          'weight_decay': weight_decay},
-                         {'params': filter(lambda p: p.requires_grad == False, net.parameters()), 'lr': 0,
-                          'weight_decay': 0}],
-                        lr=0, weight_decay=0.00)
+                #if CnnMode == 'Hybrid':
+                LearningRate = 1e-1
+                optimizer = torch.optim.Adam(
+                    [{'params': filter(lambda p: p.requires_grad == True, net.parameters()), 'lr': LearningRate,
+                      'weight_decay': weight_decay},
+                     {'params': filter(lambda p: p.requires_grad == False, net.parameters()), 'lr': 0,
+                      'weight_decay': 0}],
+                    lr=0, weight_decay=0.00)
 
-                    if type(scheduler).__name__ == 'StepLR':
-                        scheduler =  StepLR(optimizer, step_size=10, gamma=0.1)
+                if type(scheduler).__name__ == 'StepLR':
+                    scheduler =  StepLR(optimizer, step_size=10, gamma=0.1)
 
-                    if type(scheduler).__name__ == 'ReduceLROnPlateau':
-                        scheduler = ReduceLROnPlateau(optimizer, mode='min', factor=0.1, patience=3, verbose=True)
-
+                if type(scheduler).__name__ == 'ReduceLROnPlateau':
+                    scheduler = ReduceLROnPlateau(optimizer, mode='min', factor=0.1, patience=3, verbose=True)
 
 
 
             if Case2:
-                print('Hybrid: unfreezing symmetric and assymetric\n')
+                print(colored('Hybrid: unfreezing symmetric and assymetric\n', 'green', attrs=['reverse', 'blink']))
+                #print('Hybrid: unfreezing symmetric and assymetric\n')
                 if NumGpus == 1:
                     net.FreezeSymmetricCnn(False)
                     net.FreezeAsymmetricCnn(False)
@@ -396,7 +425,7 @@ if __name__ == '__main__':
 
 
 
-            if (CnnMode == 'PairwiseAsymmetric') | (CnnMode == 'PairwiseSymmetric'):
+            if (CnnMode == 'PairwiseAsymmetric') | (CnnMode == 'PairwiseSymmetric') | (CnnMode == 'PairwiseSymmetricAttention'):
 
                 if FprHardNegatives:
                     Embed = Compute_FPR_HardNegatives(net, pos1, pos2, device, FprValPos=0.7*FPR95,
@@ -404,9 +433,9 @@ if __name__ == '__main__':
                     pos1 = Embed['PosIdx1']
                     pos2 = Embed['PosIdx2']
 
-                pos1, pos2 = pos1.to(device), pos2.to(device)
+                pos1, pos2     = pos1.to(device), pos2.to(device)
                 Embed = net(pos1, pos2,DropoutP=DropoutP)
-                loss = criterion(Embed['Emb1'], Embed['Emb2']) + criterion(Embed['Emb2'], Embed['Emb1'])
+                loss           = criterion(Embed['Emb1'], Embed['Emb2']) + criterion(Embed['Emb2'], Embed['Emb1'])
 
 
             if CnnMode == 'Hybrid':
@@ -456,19 +485,20 @@ if __name__ == '__main__':
                         pos1, pos2 = pos1.to(device), pos2.to(device)
 
 
-                        #loss  = HardTrainingLoss(net, pos1, pos2,PosRatio=0.25,HardRatio=0.25,T=1,device=device)
-                        #loss += HardTrainingLoss(net, pos2, pos1, PosRatio=0.25, HardRatio=0.25, T=1, device=device)
+                        #loss  = HardTrainingLoss(net, pos1, pos2,PosRatio=0.25,MarginRatio=0.25,T=1,device=device)
+                        #loss += HardTrainingLoss(net, pos2, pos1, PosRatio=0.25, MarginRatio=0.25, T=1, device=device)
 
                         Embed = net(pos1, pos2,DropoutP=DropoutP)
-                        loss  = criterion(Embed['Hybrid1'], Embed['Hybrid2']) + criterion(Embed['Hybrid2'],Embed['Hybrid1'])
+                        loss = criterion(Embed['Hybrid1'], Embed['Hybrid2']) + criterion(Embed['Hybrid2'],Embed['Hybrid1'])
                         #loss += Random(Embed['Hybrid1'], Embed['Hybrid2'])    + Random(Embed['Hybrid2'],Embed['Hybrid1'])
                         #loss += Hardest(Embed['Hybrid1'], Embed['Hybrid2']) + Hardest(Embed['Hybrid2'],Embed['Hybrid1'])
-                        #loss  = HardTrainingLoss(net, pos1, pos2, PosRatio=1, HardRatio=1.0/2, T=1, device=device)
-                        #loss += HardTrainingLoss(net, pos2, pos1, PosRatio=1, HardRatio=1.0/4, T=1, device=device)
+                        #loss  = HardTrainingLoss(net, pos1, pos2, PosRatio=1, MarginRatio=1.0/2, T=1, device=device)
+                        #loss += HardTrainingLoss(net, pos2, pos1, PosRatio=1, MarginRatio=1.0/4, T=1, device=device)
 
                         #loss += InnerProductLoss(Embed['EmbAsym1'], Embed['EmbSym1']) + InnerProductLoss(Embed['EmbAsym2'],Embed['EmbSym2'])
-                        #loss +=criterion(Embed['EmbSym1'], Embed['EmbSym2']) + criterion(Embed['EmbSym2'],Embed['EmbSym1'])
-                        #loss +=criterion(Embed['EmbAsym1'], Embed['EmbAsym2']) + criterion(Embed['EmbAsym2'],Embed['EmbAsym1'])
+                        loss += criterion(Embed['EmbSym1'], Embed['EmbSym2']) + criterion(Embed['EmbSym2'], Embed['EmbSym1'])
+                        #loss +=criterion(Embed['EmbAsym1'], Embed['EmbAsym2'])+criterion(Embed['EmbAsym2'], Embed['EmbAsym1'])
+                        #loss += loss1
 
                         #TrainFpr = ComputeFPR(Embed['Hybrid1'], Embed['Hybrid2'], FPR95 * 0.9, FPR95 * 1.1)
                         # print('TrainFpr = ' + repr(TrainFpr))
@@ -497,10 +527,8 @@ if __name__ == '__main__':
 
                 if i > 0:
                     running_loss     /=i
-                    running_loss_ce /= i
                     running_loss_neg /= i
                     running_loss_pos /= i
-
 
                     #print('running_loss_neg: ' + repr(100*running_loss_neg)[0:5] + ' running_loss_pos: ' + repr(100*running_loss_pos)[0:5])
 
@@ -523,6 +551,9 @@ if __name__ == '__main__':
                 if (net.module.Mode == 'Hybrid1') | (net.module.Mode == 'Hybrid2'):
                     net.module.Mode = 'Hybrid'
 
+                if (net.module.Mode == 'PairwiseSymmetricAttention1') | (net.module.Mode == 'PairwiseSymmetricAttention2'):
+                    net.module.Mode = 'PairwiseSymmetricAttention'
+
                 print('FPR95 changed: ' + repr(FPR95)[0:5])
 
                 # compute stats
@@ -543,6 +574,7 @@ if __name__ == '__main__':
                     EmbTest2 = EvaluateNet(net.module.GetChannelCnn(1, CnnMode),
                                            TestData[DataName]['Data'][0::TestDecimation1, :, :, :, 1], device,
                                            StepSize)
+
                     Dist = np.power(EmbTest1 - EmbTest2, 2).sum(1)
                     TestData[DataName]['TestError'] = FPR95Accuracy(Dist, TestData[DataName]['Labels'][
                                                                           0::TestDecimation1]) * 100
@@ -554,6 +586,9 @@ if __name__ == '__main__':
 
                 if (net.module.Mode == 'Hybrid1') | (net.module.Mode == 'Hybrid2'):
                     net.module.Mode = 'Hybrid'
+
+                if (net.module.Mode == 'PairwiseSymmetricAttention1') | (net.module.Mode == 'PairwiseSymmetricAttention2'):
+                    net.module.Mode = 'PairwiseSymmetricAttention'
 
                 state = {'epoch': epoch,
                          'state_dict': net.module.state_dict(),
@@ -577,27 +612,27 @@ if __name__ == '__main__':
                 if (TotalTestError < LowestError):
                     LowestError = TotalTestError
 
-                    print('Best error found and saved: ' + repr(LowestError)[0:5])
+                    print(colored('Best error found and saved: ' + repr(LowestError)[0:5], 'red', attrs=['reverse', 'blink']))
+                    #print('Best error found and saved: ' + repr(LowestError)[0:5])
                     filepath = ModelsDirName + BestFileName + '.pth'
-
                     torch.save(state, filepath)
 
 
                 str = '[%d, %5d] loss: %.3f' % (epoch, i, 100 * running_loss) + ' Val Error: ' + repr(ValError)[0:6]
-                if running_loss_ce > 0:
-                    str += ' Rot loss: ' + repr(running_loss_ce)[0:6]
+
 
                 # for DataName in TestData:
                 #   str +=' ' + DataName + ': ' + repr(TestData[DataName]['TestError'])[0:6]
                 str += ' FPR95 = ' + repr(FPR95)[0:6] + ' Mean: ' + repr(TotalTestError)[0:6]
                 print(str)
 
-                writer.add_scalar('Val Error', ValError, epoch * len(Training_DataLoader) + i)
-                writer.add_scalar('Test Error', TotalTestError, epoch * len(Training_DataLoader) + i)
-                writer.add_scalar('Loss', 100 * running_loss, epoch * len(Training_DataLoader) + i)
-                writer.add_scalar('FPR95', FPR95, epoch * len(Training_DataLoader) + i)
-                writer.add_text('Text', str)
-                writer.close()
+                if False:
+                    writer.add_scalar('Val Error', ValError, epoch * len(Training_DataLoader) + i)
+                    writer.add_scalar('Test Error', TotalTestError, epoch * len(Training_DataLoader) + i)
+                    writer.add_scalar('Loss', 100 * running_loss, epoch * len(Training_DataLoader) + i)
+                    writer.add_scalar('FPR95', FPR95, epoch * len(Training_DataLoader) + i)
+                    writer.add_text('Text', str)
+                    writer.close()
 
 
                 # save epoch

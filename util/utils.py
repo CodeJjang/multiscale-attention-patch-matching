@@ -10,6 +10,7 @@ def LoadModel(net,StartBestModel,ModelsDirName,BestFileName,UseBestScore,device)
     optimizer = None
 
     LowestError = 1e5
+    NegativeMiningMode = 'Random'
 
     if StartBestModel:
         FileList = glob.glob(ModelsDirName + BestFileName + '.pth')
@@ -23,10 +24,9 @@ def LoadModel(net,StartBestModel,ModelsDirName,BestFileName,UseBestScore,device)
 
         checkpoint = torch.load(FileList[-1])
 
-        if 'LowestError' in checkpoint.keys():
+        if ('LowestError' in checkpoint.keys()) and UseBestScore:
             LowestError = checkpoint['LowestError']
 
-        NegativeMiningMode = 'Random'
         if 'NegativeMiningMode' in checkpoint.keys():
             NegativeMiningMode = checkpoint['NegativeMiningMode']
 
@@ -80,16 +80,9 @@ def LoadModel(net,StartBestModel,ModelsDirName,BestFileName,UseBestScore,device)
     FileList = glob.glob(ModelsDirName + BestFileName + '.pth')
     # noinspection PyInterpreter
 
-    if FileList:
-        checkpoint = torch.load(FileList[-1])
-
-        if UseBestScore:
-            LowestError = checkpoint['LowestError']
-
-
     print('LowestError: ' + repr(LowestError)[0:6])
 
-    return net,optimizer,LowestError,StartEpoch,scheduler
+    return net,optimizer,LowestError,StartEpoch,scheduler,NegativeMiningMode
 
 
 
@@ -310,3 +303,36 @@ def RandomNegativeTripletSelector(margin, cpu=False): return FunctionNegativeTri
 def SemihardNegativeTripletSelector(margin, cpu=False): return FunctionNegativeTripletSelector(margin=margin,
                                                                                   negative_selection_fn=lambda x: semihard_negative(x, margin),
                                                                                   cpu=cpu)
+
+
+
+
+class MultiEpochsDataLoader(torch.utils.data.DataLoader):
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self._DataLoader__initialized = False
+        self.batch_sampler = _RepeatSampler(self.batch_sampler)
+        self._DataLoader__initialized = True
+        self.iterator = super().__iter__()
+
+    def __len__(self):
+        return len(self.batch_sampler.sampler)
+
+    def __iter__(self):
+        for i in range(len(self)):
+            yield next(self.iterator)
+
+
+class _RepeatSampler(object):
+    """ Sampler that repeats forever.
+    Args:
+        sampler (Sampler)
+    """
+
+    def __init__(self, sampler):
+        self.sampler = sampler
+
+    def __iter__(self):
+        while True:
+            yield from iter(self.sampler)

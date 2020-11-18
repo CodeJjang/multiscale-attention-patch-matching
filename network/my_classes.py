@@ -11,8 +11,12 @@ from skimage.transform import resize,rotate
 import copy
 from network.nets import Model
 import cv2
-#import torchfunc
+import math
 import albumentations as A
+from network.positional_encodings  import PositionalEncoding2D
+from network.spp_layer import spatial_pyramid_pool
+from network.transformer import Transformer, TransformerDecoder, TransformerDecoderLayer, TransformerEncoder, TransformerEncoderLayer
+
 
 
 def separate_cnn_paras(modules):
@@ -234,7 +238,7 @@ def imshow(img):
 class DatasetPairwiseTriplets(data.Dataset):
     'Characterizes a dataset for PyTorch'
 
-    def __init__(self, Data, Labels, batch_size, Augmentation, Mode,NegativeMode='Random'):
+    def __init__(self, Data, Labels,batch_size, Augmentation, Mode,NegativeMode='Random'):
         'Initialization'
         self.PositiveIdx = np.squeeze(np.asarray(np.where(Labels == 1)));
         self.NegativeIdx = np.squeeze(np.asarray(np.where(Labels == 0)));
@@ -278,8 +282,14 @@ class DatasetPairwiseTriplets(data.Dataset):
         'Generates one sample of data'
 
         # Select pos2 pairs
-        PosIdx = np.random.randint(self.PositiveIdxNo, size=self.batch_size)
-        PosIdx = self.PositiveIdx[PosIdx]
+        if self.Mode == 'Pairwise':
+            PosIdx = np.random.randint(self.PositiveIdxNo, size=self.batch_size)
+
+        if self.Mode == 'Test':
+            PosIdx = index
+
+
+        PosIdx    = self.PositiveIdx[PosIdx]
         PosImages = self.Data[PosIdx, :, :, :].astype(np.float32)
 
         # imshow(torchvision.utils.make_grid(PosImages[0,:,:,0]))
@@ -288,92 +298,71 @@ class DatasetPairwiseTriplets(data.Dataset):
         pos1 = PosImages[:, :, :, 0]
         pos2 = PosImages[:, :, :, 1]
 
-        for i in range(0, PosImages.shape[0]):
+        if self.Mode == 'Pairwise':
+            for i in range(0, PosImages.shape[0]):
 
-            # Flip LR
-            if (np.random.uniform(0, 1) > 0.5) & self.Augmentation["HorizontalFlip"]:
-                pos1[i,] = np.fliplr(pos1[i,])
-                pos2[i,] = np.fliplr(pos2[i,])
+                # Flip LR
+                if (np.random.uniform(0, 1) > 0.5) & self.Augmentation["HorizontalFlip"]:
+                    pos1[i,] = np.fliplr(pos1[i,])
+                    pos2[i,] = np.fliplr(pos2[i,])
 
-            #flip UD
-            if (np.random.uniform(0, 1) > 0.5) & self.Augmentation["VerticalFlip"]:
-                pos1[i,] = np.flipud(pos1[i,])
-                pos2[i,] = np.flipud(pos2[i,])
+                #flip UD
+                if (np.random.uniform(0, 1) > 0.5) & self.Augmentation["VerticalFlip"]:
+                    pos1[i,] = np.flipud(pos1[i,])
+                    pos2[i,] = np.flipud(pos2[i,])
 
-            #test
-            if self.Augmentation["Test"]['Do']:
+                #test
+                if self.Augmentation["Test"]['Do']:
 
-                #plt.imshow(pos1[i,:,:],cmap='gray');plt.show();
-                data= self.transform(image=pos1[i, :, :])
-                pos1[i,] = data['image']
-                pos2[i,] = A.ReplayCompose.replay(data['replay'], image=pos2[i, :, :])['image']
-
-
-            # rotate:0, 90, 180,270,
-            if self.Augmentation["Rotate90"]:
-                idx = np.random.randint(low=0, high=4, size=1)[0]  # choose rotation
-                pos1[i,] = np.rot90(pos1[i, ], idx)
-                pos2[i,] = np.rot90(pos2[i, ], idx)
+                    #plt.imshow(pos1[i,:,:],cmap='gray');plt.show();
+                    data= self.transform(image=pos1[i, :, :])
+                    pos1[i,] = data['image']
+                    pos2[i,] = A.ReplayCompose.replay(data['replay'], image=pos2[i, :, :])['image']
 
 
-            #random crop
-            if  (np.random.uniform(0, 1) > 0.5) & self.Augmentation["RandomCrop"]['Do']:
-                dx = np.random.uniform(self.Augmentation["RandomCrop"]['MinDx'], self.Augmentation["RandomCrop"]['MaxDx'])
-                dy = np.random.uniform(self.Augmentation["RandomCrop"]['MinDy'], self.Augmentation["RandomCrop"]['MaxDy'])
+                # rotate:0, 90, 180,270,
+                if self.Augmentation["Rotate90"]:
+                    idx = np.random.randint(low=0, high=4, size=1)[0]  # choose rotation
+                    pos1[i,] = np.rot90(pos1[i, ], idx)
+                    pos2[i,] = np.rot90(pos2[i, ], idx)
 
-                dx=dy
 
-                x0 = int(dx*self.ColsNo)
-                y0 = int(dy*self.RowsNo)
+                #random crop
+                if  (np.random.uniform(0, 1) > 0.5) & self.Augmentation["RandomCrop"]['Do']:
+                    dx = np.random.uniform(self.Augmentation["RandomCrop"]['MinDx'], self.Augmentation["RandomCrop"]['MaxDx'])
+                    dy = np.random.uniform(self.Augmentation["RandomCrop"]['MinDy'], self.Augmentation["RandomCrop"]['MaxDy'])
 
-                #ShowRowImages(pos1[0:1,:,:])
-                #plt.imshow(pos1[i,:,:],cmap='gray');plt.show();
-                #aa = pos1[i,y0:,x0:]
+                    dx=dy
 
-                pos1[i, ] = resize(pos1[i,y0:,x0:], (self.RowsNo, self.ColsNo))
+                    x0 = int(dx*self.ColsNo)
+                    y0 = int(dy*self.RowsNo)
 
-                #ShowRowImages(pos1[0:1, :, :])
+                    #ShowRowImages(pos1[0:1,:,:])
+                    #plt.imshow(pos1[i,:,:],cmap='gray');plt.show();
+                    #aa = pos1[i,y0:,x0:]
 
-                pos2[i,] = resize(pos2[i,y0:,x0:], (self.RowsNo, self.ColsNo))
+                    pos1[i, ] = resize(pos1[i,y0:,x0:], (self.RowsNo, self.ColsNo))
+
+                    #ShowRowImages(pos1[0:1, :, :])
+
+                    pos2[i,] = resize(pos2[i,y0:,x0:], (self.RowsNo, self.ColsNo))
 
 
         Result = dict()
 
-        if (self.Mode == 'Pairwise') | (self.Mode == 'PairwiseRot'):
-            pos1 -= self.ChannelMean1
-            pos2 -= self.ChannelMean2
+        pos1 -= self.ChannelMean1
+        pos2 -= self.ChannelMean2
 
-            Result['pos1']   = NormalizeImages(pos1)
-            Result['pos2']   = NormalizeImages(pos2)
+        Result['pos1']   = NormalizeImages(pos1)
+        Result['pos2']   = NormalizeImages(pos2)
 
-
-            if self.Mode == 'PairwiseRot':
-                Rot1 = np.random.randint(low=0, high=4, size=pos1.shape[0])  # choose rotation
-                Rot2 = np.random.randint(low=0, high=4, size=pos1.shape[0])  # choose rotation
-
-                Result['RotPos1'] = np.zeros(pos1.shape, Result['pos1'].dtype)
-                Result['RotPos2'] = np.zeros(pos2.shape, Result['pos1'].dtype)
-
-                #ShowRowImages(pos1[0:1,:,:])
-                #plt.imshow(pos1[i,:,:],cmap='gray');plt.show();plt.show()
-                for k in range(0, pos1.shape[0]):
-                    Result['RotPos1'][k, ] = np.rot90(Result['pos1'][k, ], Rot1[k])
-                    Result['RotPos2'][k, ] = np.rot90(Result['pos2'][k, ], Rot2[k])
-
-                Result['RotLabel1'] = Rot1.astype(np.int64)
-                Result['RotLabel2'] = Rot2.astype(np.int64)
-
-            return Result
+        return Result
 
 
 
-        if self.Mode == 'Triplet':
-            Result['pos1'] = NormalizeImages(pos1)
-            Result['pos2'] = NormalizeImages(pos2)
-            Result['neg1'] = NormalizeImages(neg1)
-            Result['neg2'] = NormalizeImages(neg2)
 
-            return Result
+
+
 
 
 
@@ -406,10 +395,10 @@ class BasicSingleNet(nn.Module):
         # Conv2d(in_channels, out_channels, kernel_size, stride, padding)
         self.conv0 = Conv2d(1, 32, 5, stride=1, padding=2)
         self.conv1 = Conv2d(32,   64, 5, stride=1, padding=2)
-        self.conv2 = Conv2d(64,  128, 3, stride=1, padding=1)
-        self.conv3 = Conv2d(128, 256, 3, stride=1, padding=1)
+        self.conv2 = Conv2d(64,  K, 3, stride=1, padding=1)
+        self.conv3 = Conv2d(K, 256, 3, stride=1, padding=1)
         self.conv4 = Conv2d(256, 256, 3, stride=1, padding=1)
-        self.fc1   = Linear(1024, 128)
+        self.fc1   = Linear(1024, K)
         self.fc2   = Linear(256, 512)#for soft max
 
         self.BatchNorm1 = BatchNorm2d(64)
@@ -424,7 +413,7 @@ class BasicSingleNet(nn.Module):
 
         x = self.BatchNorm1(x)
 
-        x = self.pool2C(F.relu(self.conv2(x)))#128, 8, 8
+        x = self.pool2C(F.relu(self.conv2(x)))#K, 8, 8
         x = self.pool2D(F.relu(self.conv3(x)))#256, 4, 4
 
         x = self.BatchNorm2(x)
@@ -456,7 +445,23 @@ class SingleNet(nn.Module):
 
 
 
+def Prepare2DPosEncoding(PosEncodingX,PosEncodingY,RowNo,ColNo):
 
+    PosEncodingX = PosEncodingX[0:ColNo].unsqueeze(0)#x=[1,..,20]
+    PosEncodingY = PosEncodingY[0:RowNo]
+
+    for i in range(RowNo):
+
+        CurrentY = PosEncodingY[i, :].unsqueeze(0).unsqueeze(0).repeat(1,ColNo,1)
+
+        if i==0:
+            PosEncoding2D = torch.cat((PosEncodingX, CurrentY),2)
+        else:
+            CurrentPosEncoding2D = torch.cat((PosEncodingX, CurrentY), 2)
+
+            PosEncoding2D        = torch.cat((PosEncoding2D, CurrentPosEncoding2D), 0)
+
+    return PosEncoding2D
 
 
 
@@ -479,19 +484,84 @@ class MetricLearningCnn(nn.Module):
         self.netAS1 = Model()
         self.netAS2 = Model()
 
-        self.fc1 = Linear(128*2, 128)
-        self.fc2 = Linear(128*2, 128)
-        self.fc3 = Linear(128*2, 4)
+        K =128
+
+        self.fc1 = Linear(2*K, K)
+        self.fc2 = Linear(2*K, K)
+        #self.fc3 = Linear(K*2, 4)
+
+        self.Gain = torch.nn.Parameter(torch.ones(1))
+
+        self.Gain1 = torch.nn.Parameter(torch.ones(1))
+        self.Gain2 = torch.nn.Parameter(torch.ones(1))
 
         self.fc2 = copy.deepcopy(self.fc1)
 
+        self.fcS  = Linear(6272, K)
 
-        K = 16
-        self.fc1A = Linear(128 * 2, K)
-        self.fc1B = Linear(K, 128)
+        self.fc1A = Linear(K,K)
 
-        self.fc2A = Linear(128 * 2, K)
-        self.fc2B = Linear(K, 128)
+        self.fc2A = copy.deepcopy(self.fc1A)
+
+
+
+        self.AgeQuery       = nn.Parameter(torch.randn(1,K))
+        self.QueryPosEncode = nn.Parameter(torch.randn(1,K))
+
+
+
+        EmbeddingMaxDim = 20
+        self.PosEncodingX = nn.Parameter(torch.randn(EmbeddingMaxDim, int(K/2)))
+        self.PosEncodingY = nn.Parameter(torch.randn(EmbeddingMaxDim, int(K/2)))
+
+
+
+
+
+
+
+
+
+        self.output_num = [8, 4, 2, 1]
+        #self.output_num = [8, 4]
+        #self.output_num = [4,8]
+        #self.output_num = [8]
+
+
+        EncoderLayersNo = 2
+        InputsNo = K
+        EncoderHiddenSize = K
+        EncoderHeadsNo = 2
+        DropoutP = 0
+
+        oridinal_encoder_layers = nn.TransformerEncoderLayer(InputsNo, EncoderHeadsNo, EncoderHiddenSize, DropoutP)
+        self.Encoder     = nn.TransformerEncoder(oridinal_encoder_layers,  num_layers=EncoderLayersNo)
+
+        ordinal_decoder_layer = nn.TransformerDecoderLayer(d_model=K, nhead=EncoderHiddenSize)
+        self.OrdinalDecoder = nn.TransformerDecoder(ordinal_decoder_layer, num_layers=EncoderLayersNo)
+
+        self.OrdinalTransformer = nn.Transformer(d_model=K, nhead=EncoderHeadsNo,
+                                                 num_encoder_layers=EncoderLayersNo,
+                                                 num_decoder_layers=EncoderLayersNo)
+
+
+
+
+        self.DetrEncoderLayer = TransformerEncoderLayer(d_model=K, nhead=EncoderHeadsNo, dim_feedforward=int(K),
+                                                        dropout=0.1, activation="relu", normalize_before=False)
+        self.DetrEncoder = TransformerEncoder(encoder_layer=self.DetrEncoderLayer, num_layers=EncoderLayersNo)
+
+
+
+        self.SPFC = nn.Linear(10880, K)
+        self.SPFC = nn.Linear(8576, K)
+        #self.SPFC = nn.Linear(10240, K)
+        #self.SPFC = nn.Linear(8192, K)
+
+        self.ClassRNN1 = nn.GRU(input_size=K, hidden_size=K, num_layers=2, batch_first=False, bidirectional=False)
+        self.ClassRNN2 = nn.GRU(input_size=K, hidden_size=K, num_layers=2, batch_first=False, bidirectional=False)
+
+
 
 
 
@@ -531,6 +601,7 @@ class MetricLearningCnn(nn.Module):
 
     def GetChannelCnn(self,ChannelId,Mode):
 
+
         if (Mode == 'TripletSymmetric') | (Mode == 'PairwiseSymmetric'):
             return self.netS
 
@@ -550,26 +621,108 @@ class MetricLearningCnn(nn.Module):
                 self.Mode = 'Hybrid2'
                 return self
 
+        if (Mode == 'PairwiseSymmetricAttention') :
+            if ChannelId == 0:
+                self.Mode = 'PairwiseSymmetricAttention1'
+                return self
+
+            if ChannelId == 1:
+                self.Mode = 'PairwiseSymmetricAttention2'
+                return self
+            return self
+
 
     def FreezeSymmetricCnn(self,OnOff):
         self.netS.FreezeCnn(OnOff)
+
+    def FreezeSymmetricBlock(self,OnOff):
+        self.netS.FreezeBlock(OnOff)
 
     def FreezeAsymmetricCnn(self,OnOff):
         self.netAS1.FreezeCnn(OnOff)
         self.netAS2.FreezeCnn(OnOff)
 
 
+    def FreezeAsymmetricBlock(self,OnOff):
+        self.netAS1.FreezeBlock(OnOff)
+        self.netAS2.FreezeBlock(OnOff)
+
+
+
+
+    def spatial_pyramid_pool_2D(self,previous_conv, num_sample, previous_conv_size):
+        for i in range(len(self.output_num)):
+
+            # Pooling support
+            h_wid = int(math.ceil(previous_conv_size[0] / self.output_num[i]))
+            w_wid = int(math.ceil(previous_conv_size[1] / self.output_num[i]))
+
+            # Padding to retain orgonal dimensions
+            h_pad = int((h_wid * self.output_num[i] - previous_conv_size[0] + 1) / 2)
+            w_pad = int((w_wid * self.output_num[i] - previous_conv_size[1] + 1) / 2)
+
+            # apply pooling
+            maxpool = nn.MaxPool2d((h_wid, w_wid), stride=(h_wid, w_wid), padding=(h_pad, w_pad))
+
+            y = maxpool(previous_conv)
+
+
+
+            if (i == 0):
+                spp = y.reshape(num_sample, -1)
+            else:
+                PosEncoding2D = Prepare2DPosEncoding(self.PosEncodingX,
+                                                     self.PosEncodingY,
+                                                     y.shape[2],y.shape[3])
+
+                PosEncoding = PosEncoding2D.permute(2, 0, 1)
+                PosEncoding = PosEncoding[:,0:y.shape[2],0:y.shape[3]]
+                PosEncoding = PosEncoding.reshape((PosEncoding.shape[0], PosEncoding.shape[1] * PosEncoding.shape[2]))
+                PosEncoding = PosEncoding.permute(1, 0).unsqueeze(1)
+                PosEncoding = torch.cat((self.QueryPosEncode.unsqueeze(0),PosEncoding),0)
+
+
+                x = y.reshape((y.shape[0], y.shape[1], y.shape[2] * y.shape[3]))
+                x = x.permute(2, 0, 1)
+
+                AgeQuery = self.AgeQuery.repeat(1, x.shape[1], 1)
+                x = torch.cat((AgeQuery,x),0)
+                #x = self.Encoder(src=x)
+                x = self.DetrEncoder(src=x,pos = PosEncoding)
+
+
+                #x = x.permute(1, 0, 2)
+                x = x[0,]
+
+                spp = torch.cat((spp, x.reshape(num_sample, -1)), 1)
+
+        return spp
+
+
 
 
 
     #output CNN
-    def forward(self,S1A, S1B=0,Mode = -1,Rot1=0,Rot2=0,DropoutP = 0.0):
+    def forward(self,S1A, S1B=0,Mode = -1,DropoutP = 0.0):
 
         if (S1A.nelement() == 0):
             return 0
 
         if Mode == -1:
             Mode = self.Mode
+
+
+        if Mode == 'PairwiseSymmetricAttention':
+
+                output1 = self.forward(S1A,Mode = 'PairwiseSymmetricAttention1',DropoutP =DropoutP)
+                output2 = self.forward(S1B,Mode = 'PairwiseSymmetricAttention1', DropoutP = DropoutP)
+
+                Result = dict()
+                Result['Emb1'] = output1
+                Result['Emb2'] = output2
+
+                return Result
+
 
         if Mode == 'PairwiseSymmetric':
 
@@ -582,6 +735,7 @@ class MetricLearningCnn(nn.Module):
             Result = dict()
             Result['Emb1'] = output1
             Result['Emb2'] = output2
+
             return Result
 
 
@@ -601,7 +755,7 @@ class MetricLearningCnn(nn.Module):
 
 
 
-        if (Mode == 'Hybrid') | (Mode == 'HybridCat'):
+        if (Mode == 'Hybrid') :
             #p: probability of an element to be zeroed.Default: 0.5
             DropoutP1 = 0
 
@@ -612,17 +766,19 @@ class MetricLearningCnn(nn.Module):
             EmbSym1  = self.netS(S1A,'Normalized',DropoutP=DropoutP1)
             EmbAsym1 = self.netAS1(S1A,'Normalized',DropoutP=DropoutP1)
 
-            # concat embeddings and apply relu: 128+128=256
-            Hybrid1 = torch.cat((EmbSym1, EmbAsym1), 1)
+            # concat embeddings and apply relu: K+K=256
+            #Hybrid1 = torch.cat((EmbSym1, EmbAsym1), 1)
 
-            #if Mode == 'HybridCat':
-            #    Result['Hybrid1'] = Hybrid1
+            Hybrid1 = EmbSym1+self.Gain1*EmbAsym1
+            #Hybrid1 = F.normalize(Hybrid1, dim=1, p=2)
+
 
             Hybrid1 = F.relu(Hybrid1)
-            Hybrid1 = Dropout(DropoutP)(Hybrid1)  # 20% probabilit
+            #Hybrid1 = Dropout(DropoutP)(Hybrid1)  # 20% probabilit
 
             # prepare output
-            Hybrid1 = self.fc1(Hybrid1)
+            #Hybrid1 = self.fc1(Hybrid1)
+            Hybrid1 = self.fc1A(Hybrid1)
             #Hybrid1 = self.fc1B(self.fc1A(Hybrid1))
 
             #
@@ -630,8 +786,8 @@ class MetricLearningCnn(nn.Module):
             #Hybrid1 = F.relu((self.fc1A(Hybrid1))
             #Hybrid1 = self.fc1B(Hybrid1)
 
-            #Hybrid1 = F.normalize(Hybrid1, dim=1, p=2)
-            Hybrid1 = L2Norm()(Hybrid1)
+            Hybrid1 = F.normalize(Hybrid1, dim=1, p=2)
+            #Hybrid1 = L2Norm()(Hybrid1)
 
 
 
@@ -639,27 +795,27 @@ class MetricLearningCnn(nn.Module):
             EmbSym2  = self.netS(S1B,'Normalized',DropoutP=DropoutP1)
             EmbAsym2 = self.netAS2(S1B,'Normalized',DropoutP=DropoutP1)
 
-            # concat embeddings and apply relu: 128+128=256
-            Hybrid2 = torch.cat((EmbSym2, EmbAsym2), 1)
+            # concat embeddings and apply relu: K+K=256
+            #Hybrid2 = torch.cat((EmbSym2, EmbAsym2), 1)
 
+            Hybrid2 = EmbSym2+self.Gain2*EmbAsym2
+            #Hybrid2 = F.normalize(Hybrid2, dim=1, p=2)
 
-            #if Mode == 'HybridCat':
-             #   Result['Hybrid2'] = Hybrid2
-              #  return Result
 
             Hybrid2 = F.relu(Hybrid2)
-            Hybrid2 = Dropout(DropoutP)(Hybrid2)
+            #Hybrid2 = Dropout(DropoutP)(Hybrid2)
 
 
             # prepare output
-            Hybrid2 = self.fc2(Hybrid2)
+            #Hybrid2 = self.fc2(Hybrid2)
+            Hybrid2 = self.fc2A(Hybrid2)
 
             #Hybrid2 = F.relu((self.fc2A(Hybrid2))
             #Hybrid2 = self.fc2B(Hybrid2)
 
 
-            #Hybrid2 = F.normalize(Hybrid2, dim=1, p=2)
-            Hybrid2 = L2Norm()(Hybrid2)
+            Hybrid2 = F.normalize(Hybrid2, dim=1, p=2)
+            #Hybrid2 = L2Norm()(Hybrid2)
 
             if torch.any(torch.isnan(Hybrid1)) or torch.any(torch.isnan(Hybrid2)):
                 print('Nan found')
@@ -676,60 +832,66 @@ class MetricLearningCnn(nn.Module):
 
 
 
-        if (Mode == 'Hybrid1') |  (Mode == 'HybridCat1'):
+        if (Mode == 'Hybrid1'):
             # source#1: vis
             # channel1
             EmbSym1 = self.netS(S1A, 'Normalized')
             EmbAsym1 = self.netAS1(S1A, 'Normalized')
 
-            # concat embeddings and apply relu: 128+128=256
-            Hybrid1 = torch.cat((EmbSym1, EmbAsym1), 1)
+            # concat embeddings and apply relu: K+K=256
+            #Hybrid1 = torch.cat((EmbSym1, EmbAsym1), 1)
+            Hybrid1 = EmbSym1+self.Gain1*EmbAsym1
+            #Hybrid1 = F.normalize(Hybrid1, dim=1, p=2)
 
-            if Mode == 'HybridCat':
-                return Hybrid1
 
             Hybrid1 = F.relu(Hybrid1)
-            #Hybrid1 = torch.cat((EmbSym1, EmbAsym1), 1)
+
 
             # prepare output
-            Hybrid1 = self.fc1(Hybrid1)
-            #Hybrid1 = self.fc1B(self.fc1A(Hybrid1))
+            #Hybrid1 = self.fc1(Hybrid1)
+            Hybrid1 = self.fc1A(Hybrid1)
+
+
             Hybrid1 = F.normalize(Hybrid1, dim=1, p=2)
             #Hybrid1 = L2Norm()(Hybrid1)
 
             return Hybrid1
 
 
-        if (Mode == 'Hybrid2') |  (Mode == 'HybridCat2'):
+        if (Mode == 'Hybrid2'):
             # source#2: IR
             EmbSym2 = self.netS(S1A, 'Normalized')
             EmbAsym2 = self.netAS2(S1A, 'Normalized')
 
-            # concat embeddings and apply relu: 128+128=256
-            Hybrid2 = torch.cat((EmbSym2, EmbAsym2), 1)
-
-            if Mode == 'HybridCat2':
-                return Hybrid2
+            # concat embeddings and apply relu: K+K=256
+            #Hybrid2 = torch.cat((EmbSym2, EmbAsym2), 1)
+            Hybrid2 = EmbSym2+self.Gain2*EmbAsym2
+            #Hybrid2 = F.normalize(Hybrid2, dim=1, p=2)
 
             Hybrid2 = F.relu(Hybrid2)
-            #Hybrid2 = torch.cat((EmbSym2, EmbAsym2), 1)
+
 
 
             # prepare output
-            Hybrid2 = self.fc2(Hybrid2)
+            #Hybrid2 = self.fc2(Hybrid2)
+            Hybrid2 = self.fc2A(Hybrid2)
             #Hybrid2 = self.fc2B(self.fc2A(Hybrid2))
             Hybrid2 = F.normalize(Hybrid2, dim=1, p=2)
             #Hybrid2 = L2Norm()(Hybrid2)
 
             return Hybrid2
 
+        if (Mode == 'PairwiseSymmetricAttention1') | (Mode == 'PairwiseSymmetricAttention2'):
 
+            output1, ActivMap1 = self.netS(S1A, ActivMode=True, DropoutP=DropoutP)
 
-        if Mode == 'SM':
-            z = F.relu(torch.cat((S1A, S1B), 1))
-            RotFlag = self.fc3(z)
+            spp_a = self.spatial_pyramid_pool_2D(ActivMap1, S1A.size(0), [int(ActivMap1.size(2)), int(ActivMap1.size(3))])
 
-            return RotFlag
+            output1 = self.SPFC(spp_a)
+
+            output1 = F.normalize(output1, dim=1, p=2)
+
+        return output1
 
 
 
@@ -745,7 +907,7 @@ class SiamesePairwiseSoftmax(nn.Module):
         super(SiamesePairwiseSoftmax, self).__init__()
 
         self.net = SingleNet()
-        self.fc1 = Linear(128*2, 256)
+        self.fc1 = Linear(K*2, 256)
         self.fc2 = Linear(256, 2)
 
 
@@ -765,3 +927,8 @@ class SiamesePairwiseSoftmax(nn.Module):
         y = self.fc2(y)
 
         return y
+
+
+
+
+
