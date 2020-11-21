@@ -485,117 +485,23 @@ class MetricLearningCnn(nn.Module):
         self.netAS2 = Model()
 
         K =128
+        self.AttenS   =  AttentionEmbeddingCNN(K,EmbeddingMaxDim=20)
+        self.AttenAS1 = AttentionEmbeddingCNN(K, EmbeddingMaxDim=20)
+        self.AttenAS2 = AttentionEmbeddingCNN(K, EmbeddingMaxDim=20)
 
         self.fc1 = Linear(2*K, K)
         self.fc2 = Linear(2*K, K)
-        #self.fc3 = Linear(K*2, 4)
+        self.fc2 = copy.deepcopy(self.fc1)
+
+        self.fc1A = Linear(K, K)
+        self.fc2A = copy.deepcopy(self.fc1A)
+
 
         self.Gain = torch.nn.Parameter(torch.ones(1))
 
         self.Gain1 = torch.nn.Parameter(torch.ones(1))
         self.Gain2 = torch.nn.Parameter(torch.ones(1))
 
-        self.fc2 = copy.deepcopy(self.fc1)
-
-        self.fcS  = Linear(6272, K)
-
-        self.fc1A = Linear(K,K)
-
-        self.fc2A = copy.deepcopy(self.fc1A)
-
-
-
-        self.AgeQuery       = nn.Parameter(torch.randn(1,K))
-        self.QueryPosEncode = nn.Parameter(torch.randn(1,K))
-
-
-
-        EmbeddingMaxDim = 20
-        self.PosEncodingX = nn.Parameter(torch.randn(EmbeddingMaxDim, int(K/2)))
-        self.PosEncodingY = nn.Parameter(torch.randn(EmbeddingMaxDim, int(K/2)))
-
-
-
-
-
-
-
-
-
-        self.output_num = [8, 4, 2, 1]
-        #self.output_num = [8, 4]
-        #self.output_num = [4,8]
-        #self.output_num = [8]
-
-
-        EncoderLayersNo = 2
-        InputsNo = K
-        EncoderHiddenSize = K
-        EncoderHeadsNo = 2
-        DropoutP = 0
-
-        oridinal_encoder_layers = nn.TransformerEncoderLayer(InputsNo, EncoderHeadsNo, EncoderHiddenSize, DropoutP)
-        self.Encoder     = nn.TransformerEncoder(oridinal_encoder_layers,  num_layers=EncoderLayersNo)
-
-        ordinal_decoder_layer = nn.TransformerDecoderLayer(d_model=K, nhead=EncoderHiddenSize)
-        self.OrdinalDecoder = nn.TransformerDecoder(ordinal_decoder_layer, num_layers=EncoderLayersNo)
-
-        self.OrdinalTransformer = nn.Transformer(d_model=K, nhead=EncoderHeadsNo,
-                                                 num_encoder_layers=EncoderLayersNo,
-                                                 num_decoder_layers=EncoderLayersNo)
-
-
-
-
-        self.DetrEncoderLayer = TransformerEncoderLayer(d_model=K, nhead=EncoderHeadsNo, dim_feedforward=int(K),
-                                                        dropout=0.1, activation="relu", normalize_before=False)
-        self.DetrEncoder = TransformerEncoder(encoder_layer=self.DetrEncoderLayer, num_layers=EncoderLayersNo)
-
-
-
-        self.SPFC = nn.Linear(10880, K)
-        self.SPFC = nn.Linear(8576, K)
-        #self.SPFC = nn.Linear(10240, K)
-        #self.SPFC = nn.Linear(8192, K)
-
-        self.ClassRNN1 = nn.GRU(input_size=K, hidden_size=K, num_layers=2, batch_first=False, bidirectional=False)
-        self.ClassRNN2 = nn.GRU(input_size=K, hidden_size=K, num_layers=2, batch_first=False, bidirectional=False)
-
-
-
-
-
-    def SymmCnnParams(self):
-        netSParams   = separate_cnn_paras(self.netS)
-        return netSParams
-
-    def AsymmCnnParams(self):
-        netAS1Params = separate_cnn_paras(self.netAS1)
-        netAS2Params = separate_cnn_paras(self.netAS2)
-
-        Params = netAS1Params + netAS2Params
-
-        return Params
-
-
-    def BaseCnnParams(self):
-        netSParams = separate_cnn_paras(self.netS)
-        netAS1Params = separate_cnn_paras(self.netAS1)
-        netAS2Params = separate_cnn_paras(self.netAS2)
-
-        Params = netSParams + netAS1Params + netAS2Params
-
-        return Params
-
-
-
-    def HeadCnnParams(self):
-        fc1Params = separate_cnn_paras(self.fc1)
-        fc2Params = separate_cnn_paras(self.fc2)
-
-        Params = fc1Params + fc2Params
-
-        return Params
 
 
 
@@ -621,6 +527,7 @@ class MetricLearningCnn(nn.Module):
                 self.Mode = 'Hybrid2'
                 return self
 
+
         if (Mode == 'PairwiseSymmetricAttention') :
             if ChannelId == 0:
                 self.Mode = 'PairwiseSymmetricAttention1'
@@ -628,6 +535,18 @@ class MetricLearningCnn(nn.Module):
 
             if ChannelId == 1:
                 self.Mode = 'PairwiseSymmetricAttention2'
+                return self
+            return self
+
+
+
+        if (Mode == 'PairwiseAsymmetricAttention'):
+            if ChannelId == 0:
+                self.Mode = 'PairwiseAsymmetricAttention1'
+                return self
+
+            if ChannelId == 1:
+                self.Mode = 'PairwiseAsymmetricAttention2'
                 return self
             return self
 
@@ -650,53 +569,6 @@ class MetricLearningCnn(nn.Module):
 
 
 
-    def spatial_pyramid_pool_2D(self,previous_conv, num_sample, previous_conv_size):
-        for i in range(len(self.output_num)):
-
-            # Pooling support
-            h_wid = int(math.ceil(previous_conv_size[0] / self.output_num[i]))
-            w_wid = int(math.ceil(previous_conv_size[1] / self.output_num[i]))
-
-            # Padding to retain orgonal dimensions
-            h_pad = int((h_wid * self.output_num[i] - previous_conv_size[0] + 1) / 2)
-            w_pad = int((w_wid * self.output_num[i] - previous_conv_size[1] + 1) / 2)
-
-            # apply pooling
-            maxpool = nn.MaxPool2d((h_wid, w_wid), stride=(h_wid, w_wid), padding=(h_pad, w_pad))
-
-            y = maxpool(previous_conv)
-
-
-
-            if (i == 0):
-                spp = y.reshape(num_sample, -1)
-            else:
-                PosEncoding2D = Prepare2DPosEncoding(self.PosEncodingX,
-                                                     self.PosEncodingY,
-                                                     y.shape[2],y.shape[3])
-
-                PosEncoding = PosEncoding2D.permute(2, 0, 1)
-                PosEncoding = PosEncoding[:,0:y.shape[2],0:y.shape[3]]
-                PosEncoding = PosEncoding.reshape((PosEncoding.shape[0], PosEncoding.shape[1] * PosEncoding.shape[2]))
-                PosEncoding = PosEncoding.permute(1, 0).unsqueeze(1)
-                PosEncoding = torch.cat((self.QueryPosEncode.unsqueeze(0),PosEncoding),0)
-
-
-                x = y.reshape((y.shape[0], y.shape[1], y.shape[2] * y.shape[3]))
-                x = x.permute(2, 0, 1)
-
-                AgeQuery = self.AgeQuery.repeat(1, x.shape[1], 1)
-                x = torch.cat((AgeQuery,x),0)
-                #x = self.Encoder(src=x)
-                x = self.DetrEncoder(src=x,pos = PosEncoding)
-
-
-                #x = x.permute(1, 0, 2)
-                x = x[0,]
-
-                spp = torch.cat((spp, x.reshape(num_sample, -1)), 1)
-
-        return spp
 
 
 
@@ -714,14 +586,25 @@ class MetricLearningCnn(nn.Module):
 
         if Mode == 'PairwiseSymmetricAttention':
 
-                output1 = self.forward(S1A,Mode = 'PairwiseSymmetricAttention1',DropoutP =DropoutP)
-                output2 = self.forward(S1B,Mode = 'PairwiseSymmetricAttention1', DropoutP = DropoutP)
+                output1 = self.AttenS(S1A, ActivMode=True, DropoutP=DropoutP)
+                output2 = self.AttenS(S1B, ActivMode=True, DropoutP=DropoutP)
 
                 Result = dict()
                 Result['Emb1'] = output1
                 Result['Emb2'] = output2
 
                 return Result
+
+        if Mode == 'PairwiseAsymmetricAttention':
+
+            output1 = self.AttenAS1(S1A, ActivMode=True, DropoutP=DropoutP)
+            output2 = self.AttenAS2(S1B, ActivMode=True, DropoutP=DropoutP)
+
+            Result = dict()
+            Result['Emb1'] = output1
+            Result['Emb2'] = output2
+
+            return Result
 
 
         if Mode == 'PairwiseSymmetric':
@@ -781,13 +664,7 @@ class MetricLearningCnn(nn.Module):
             Hybrid1 = self.fc1A(Hybrid1)
             #Hybrid1 = self.fc1B(self.fc1A(Hybrid1))
 
-            #
-
-            #Hybrid1 = F.relu((self.fc1A(Hybrid1))
-            #Hybrid1 = self.fc1B(Hybrid1)
-
             Hybrid1 = F.normalize(Hybrid1, dim=1, p=2)
-            #Hybrid1 = L2Norm()(Hybrid1)
 
 
 
@@ -803,19 +680,13 @@ class MetricLearningCnn(nn.Module):
 
 
             Hybrid2 = F.relu(Hybrid2)
-            #Hybrid2 = Dropout(DropoutP)(Hybrid2)
 
 
             # prepare output
             #Hybrid2 = self.fc2(Hybrid2)
             Hybrid2 = self.fc2A(Hybrid2)
 
-            #Hybrid2 = F.relu((self.fc2A(Hybrid2))
-            #Hybrid2 = self.fc2B(Hybrid2)
-
-
             Hybrid2 = F.normalize(Hybrid2, dim=1, p=2)
-            #Hybrid2 = L2Norm()(Hybrid2)
 
             if torch.any(torch.isnan(Hybrid1)) or torch.any(torch.isnan(Hybrid2)):
                 print('Nan found')
@@ -834,28 +705,23 @@ class MetricLearningCnn(nn.Module):
 
         if (Mode == 'Hybrid1'):
             # source#1: vis
-            # channel1
             EmbSym1 = self.netS(S1A, 'Normalized')
             EmbAsym1 = self.netAS1(S1A, 'Normalized')
 
             # concat embeddings and apply relu: K+K=256
             #Hybrid1 = torch.cat((EmbSym1, EmbAsym1), 1)
             Hybrid1 = EmbSym1+self.Gain1*EmbAsym1
-            #Hybrid1 = F.normalize(Hybrid1, dim=1, p=2)
-
-
             Hybrid1 = F.relu(Hybrid1)
-
 
             # prepare output
             #Hybrid1 = self.fc1(Hybrid1)
             Hybrid1 = self.fc1A(Hybrid1)
 
-
             Hybrid1 = F.normalize(Hybrid1, dim=1, p=2)
-            #Hybrid1 = L2Norm()(Hybrid1)
 
             return Hybrid1
+
+
 
 
         if (Mode == 'Hybrid2'):
@@ -866,69 +732,136 @@ class MetricLearningCnn(nn.Module):
             # concat embeddings and apply relu: K+K=256
             #Hybrid2 = torch.cat((EmbSym2, EmbAsym2), 1)
             Hybrid2 = EmbSym2+self.Gain2*EmbAsym2
-            #Hybrid2 = F.normalize(Hybrid2, dim=1, p=2)
-
             Hybrid2 = F.relu(Hybrid2)
-
-
 
             # prepare output
             #Hybrid2 = self.fc2(Hybrid2)
             Hybrid2 = self.fc2A(Hybrid2)
-            #Hybrid2 = self.fc2B(self.fc2A(Hybrid2))
+
             Hybrid2 = F.normalize(Hybrid2, dim=1, p=2)
-            #Hybrid2 = L2Norm()(Hybrid2)
 
             return Hybrid2
 
-        if (Mode == 'PairwiseSymmetricAttention1') | (Mode == 'PairwiseSymmetricAttention2'):
-
-            output1, ActivMap1 = self.netS(S1A, ActivMode=True, DropoutP=DropoutP)
-
-            spp_a = self.spatial_pyramid_pool_2D(ActivMap1, S1A.size(0), [int(ActivMap1.size(2)), int(ActivMap1.size(3))])
-
-            output1 = self.SPFC(spp_a)
-
-            output1 = F.normalize(output1, dim=1, p=2)
-
-        return output1
 
 
 
 
+        if (Mode == 'PairwiseSymmetricAttention1') or (Mode == 'PairwiseSymmetricAttention2'):
 
+            output1 = self.AttenS(S1A, ActivMode=True, DropoutP=DropoutP)
 
+            return output1
 
+        if (Mode == 'PairwiseAsymmetricAttention1'):
 
+            output1 = self.AttenAS1(S1A, ActivMode=True, DropoutP=DropoutP)
 
+            return output1
 
-class SiamesePairwiseSoftmax(nn.Module):
-    def __init__(self):
-        super(SiamesePairwiseSoftmax, self).__init__()
+        if (Mode == 'PairwiseAsymmetricAttention2'):
 
-        self.net = SingleNet()
-        self.fc1 = Linear(K*2, 256)
-        self.fc2 = Linear(256, 2)
+            output1 = self.AttenAS2(S1A, ActivMode=True, DropoutP=DropoutP)
 
-
-    def GetChannelCnn(self,ChannelId=0):
-        return self.net
-
-
-    #output CNN
-    def forward(self,x1,x2):
-
-        emb_x1 = self.net(x1)
-        emb_x2 = self.net(x2)
-
-        #prepare pos result
-        y = torch.cat((emb_x1, emb_x2), 1)
-        y = F.relu(self.fc1(y))
-        y = self.fc2(y)
-
-        return y
+            return output1
 
 
 
 
 
+
+
+
+
+
+
+
+
+class AttentionEmbeddingCNN(nn.Module):
+
+
+    def __init__(self,K,EmbeddingMaxDim=20,):
+        super(AttentionEmbeddingCNN, self).__init__()
+
+        self.net = Model()
+
+        self.AgeQuery = nn.Parameter(torch.randn(1, K))
+        self.QueryPosEncode = nn.Parameter(torch.randn(1, K))
+
+        EmbeddingMaxDim = 20
+        self.PosEncodingX = nn.Parameter(torch.randn(EmbeddingMaxDim, int(K / 2)))
+        self.PosEncodingY = nn.Parameter(torch.randn(EmbeddingMaxDim, int(K / 2)))
+
+        self.output_num = [8, 4, 2, 1]
+        # self.output_num = [8, 4]
+        # self.output_num = [4,8]
+        # self.output_num = [8]
+
+        EncoderLayersNo = 2
+        EncoderHeadsNo = 2
+
+
+        self.DetrEncoderLayer = TransformerEncoderLayer(d_model=K, nhead=EncoderHeadsNo, dim_feedforward=int(K),
+                                                        dropout=0.1, activation="relu", normalize_before=False)
+        self.DetrEncoder = TransformerEncoder(encoder_layer=self.DetrEncoderLayer, num_layers=EncoderLayersNo)
+
+        self.SPFC = nn.Linear(10880, K)
+        self.SPFC = nn.Linear(8576, K)
+        # self.SPFC = nn.Linear(10240, K)
+        # self.SPFC = nn.Linear(8192, K)
+
+
+    def spatial_pyramid_pool_2D(self, previous_conv, num_sample, previous_conv_size):
+        for i in range(len(self.output_num)):
+
+            # Pooling support
+            h_wid = int(math.ceil(previous_conv_size[0] / self.output_num[i]))
+            w_wid = int(math.ceil(previous_conv_size[1] / self.output_num[i]))
+
+            # Padding to retain orgonal dimensions
+            h_pad = int((h_wid * self.output_num[i] - previous_conv_size[0] + 1) / 2)
+            w_pad = int((w_wid * self.output_num[i] - previous_conv_size[1] + 1) / 2)
+
+            # apply pooling
+            maxpool = nn.MaxPool2d((h_wid, w_wid), stride=(h_wid, w_wid), padding=(h_pad, w_pad))
+
+            y = maxpool(previous_conv)
+
+            if (i == 0):
+                spp = y.reshape(num_sample, -1)
+            else:
+                PosEncoding2D = Prepare2DPosEncoding(self.PosEncodingX,
+                                                     self.PosEncodingY,
+                                                     y.shape[2], y.shape[3])
+
+                PosEncoding = PosEncoding2D.permute(2, 0, 1)
+                PosEncoding = PosEncoding[:, 0:y.shape[2], 0:y.shape[3]]
+                PosEncoding = PosEncoding.reshape((PosEncoding.shape[0], PosEncoding.shape[1] * PosEncoding.shape[2]))
+                PosEncoding = PosEncoding.permute(1, 0).unsqueeze(1)
+                PosEncoding = torch.cat((self.QueryPosEncode.unsqueeze(0), PosEncoding), 0)
+
+                x = y.reshape((y.shape[0], y.shape[1], y.shape[2] * y.shape[3]))
+                x = x.permute(2, 0, 1)
+
+                AgeQuery = self.AgeQuery.repeat(1, x.shape[1], 1)
+                x = torch.cat((AgeQuery, x), 0)
+                # x = self.Encoder(src=x)
+                x = self.DetrEncoder(src=x, pos=PosEncoding)
+
+                # x = x.permute(1, 0, 2)
+                x = x[0,]
+
+                spp = torch.cat((spp, x.reshape(num_sample, -1)), 1)
+
+        return spp
+
+    def forward(self, x,DropoutP,ActivMode=True):
+
+        output1, ActivMap1 = self.net(x, ActivMode=True, DropoutP=DropoutP)
+        #return output1, ActivMap1
+
+        spp_a = self.spatial_pyramid_pool_2D(ActivMap1, x.size(0),
+                                             [int(ActivMap1.size(2)), int(ActivMap1.size(3))])
+        Result = self.SPFC(spp_a)
+        Result = F.normalize(Result, dim=1, p=2)
+
+        return Result

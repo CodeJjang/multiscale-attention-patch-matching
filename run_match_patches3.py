@@ -19,7 +19,7 @@ from util.warmup_scheduler import GradualWarmupSchedulerV2
 # my classes
 from network.my_classes import imshow, ShowRowImages, ShowTwoRowImages, EvaluateSofmaxNet, EvaluateDualNets
 from network.my_classes import DatasetPairwiseTriplets, FPR95Accuracy
-from network.my_classes import SingleNet, MetricLearningCnn, EvaluateNet, SiamesePairwiseSoftmax, NormalizeImages
+from network.my_classes import SingleNet, MetricLearningCnn, EvaluateNet, NormalizeImages
 from network.losses import ContrastiveLoss, TripletLoss, OnlineTripletLoss, OnlineHardNegativeMiningTripletLoss
 from network.losses import InnerProduct, FindFprTrainingSet, FPRLoss, PairwiseLoss, HardTrainingLoss
 from network.losses import Compute_FPR_HardNegatives, ComputeFPR
@@ -57,7 +57,6 @@ if __name__ == '__main__':
     TestDecimation = 10
     FPR95 = 0.8
     MaxNoImages = 400
-    FprHardNegatives = False
 
     writer = SummaryWriter(LogsDirName)
     LowestError = 1e10
@@ -77,11 +76,14 @@ if __name__ == '__main__':
     AssymetricInitializationPhase = False
 
     TestMode = False
-    TestDecimation = 10
 
     FreezeSymmetricBlock = False
 
-    if True:
+    torch.manual_seed(0)
+    np.random.seed(0)
+    #torch.set_deterministic(True)
+
+    if False:
         GeneratorMode = 'Pairwise'
         CnnMode = 'PairwiseSymmetric'
         CnnMode = 'PairwiseSymmetricAttention'
@@ -99,7 +101,7 @@ if __name__ == '__main__':
         StartBestModel      = False
         UseBestScore        = False
 
-        LearningRate =  1e-1
+        LearningRate = 1e-1
 
         weight_decay = 0#1e-5
         DropoutP = 0.5
@@ -119,32 +121,35 @@ if __name__ == '__main__':
         FreezeAsymmetricCnn = True
 
 
-        FprHardNegatives = False
+
 
         StartBestModel = False
         UseBestScore   = False
 
-    if False:
+    if True:
         GeneratorMode = 'Pairwise'
         CnnMode = 'PairwiseAsymmetric'
+        CnnMode = 'PairwiseAsymmetricAttention'
+
         NegativeMiningMode = 'Random'
         #NegativeMiningMode = 'Hardest'
         criterion = OnlineHardNegativeMiningTripletLoss(margin=1, Mode=NegativeMiningMode)
         # criterion = OnlineHardNegativeMiningTripletLoss(margin=1, Mode='HardPos', MarginRatio=1.0/2, PosRatio=1. / 2)
 
-        InitializeOptimizer = False
+        InitializeOptimizer = True
         UseWarmUp           = True
+
         StartBestModel      = False
-        UseBestScore        = True
+        UseBestScore        = False
 
         FreezeSymmetricCnn   = True
         FreezeAsymmetricCnn  = False
 
         LearningRate = 1e-1
-        OuterBatchSize = 24;
-        InnerBatchSize = 6
+        OuterBatchSize = 4 * 12
+        InnerBatchSize = 2 * 12
 
-        FprHardNegatives = False
+
 
         weight_decay = 0
         DropoutP = 0.5
@@ -187,7 +192,7 @@ if __name__ == '__main__':
         TestMode = False
         TestDecimation = 10
 
-        FprHardNegatives = False
+
 
         FreezeSymmetricCnn  = False
         FreezeAsymmetricCnn = False
@@ -410,9 +415,10 @@ if __name__ == '__main__':
                 FreezeAsymmetricCnn = False
 
 
+
+
         bar = tqdm(Training_DataLoader, 0, leave=False)
         for i, Data in enumerate(bar):
-        #for i, Data in enumerate(tqdm(Training_DataLoader, 0)):
 
             net = net.train()
 
@@ -425,13 +431,7 @@ if __name__ == '__main__':
 
 
 
-            if (CnnMode == 'PairwiseAsymmetric') | (CnnMode == 'PairwiseSymmetric') | (CnnMode == 'PairwiseSymmetricAttention'):
-
-                if FprHardNegatives:
-                    Embed = Compute_FPR_HardNegatives(net, pos1, pos2, device, FprValPos=0.7*FPR95,
-                                                           FprValNeg=1.5 * FPR95, MaxNoImages=MaxNoImages)
-                    pos1 = Embed['PosIdx1']
-                    pos2 = Embed['PosIdx2']
+            if (CnnMode == 'PairwiseAsymmetric') or (CnnMode == 'PairwiseSymmetric') or (CnnMode == 'PairwiseSymmetricAttention') or (CnnMode == 'PairwiseAsymmetricAttention'):
 
                 pos1, pos2     = pos1.to(device), pos2.to(device)
                 Embed = net(pos1, pos2,DropoutP=DropoutP)
@@ -441,67 +441,13 @@ if __name__ == '__main__':
             if CnnMode == 'Hybrid':
 
                 # GPUtil.showUtilization()
-                if FprHardNegatives:
+                pos1, pos2 = pos1.to(device), pos2.to(device)
 
-                    Embed = Compute_FPR_HardNegatives(net, pos1, pos2, device, FprValPos=0.7 * FPR95,
-                                                      FprValNeg=1.3*FPR95, MaxNoImages=MaxNoImages)
+                Embed = net(pos1, pos2,DropoutP=DropoutP)
+                loss = criterion(Embed['Hybrid1'], Embed['Hybrid2']) + criterion(Embed['Hybrid2'],Embed['Hybrid1'])
 
-
-                    Embed['PosIdx1'], Embed['PosIdx2'] = Embed['PosIdx1'].to(device), Embed['PosIdx2'].to(device)
-                    EmbedPos = net(Embed['PosIdx1'], Embed['PosIdx2'])
-                    loss = PairwiseLoss(EmbedPos['Hybrid1'], EmbedPos['Hybrid2'])
-                    pos_loss = loss.item()
-
-                    # loss = HardestCriterion(EmbedPos['Hybrid1'], EmbedPos['Hybrid2'])
-
-                    if (Embed['NegIdxA1'].nelement() > 1) & (Embed['NegIdxA1'].shape[0] > 1):
-                        Embed['NegIdxA1'], Embed['NegIdxA2'] = Embed['NegIdxA1'].to(device), Embed['NegIdxA2'].to(
-                            device)
-                        EmbedNegA = net(Embed['NegIdxA1'], Embed['NegIdxA2'])
-
-                        neg_loss1 = PairwiseLoss(EmbedNegA['Hybrid1'], EmbedNegA['Hybrid2'])
-                        loss     -= neg_loss1
-                        neg_loss  = neg_loss1.item()
-
-                    #loss -= PairwiseLoss(EmbedNegA['EmbAsym1'], EmbedNegA['EmbAsym2'])
-
-                        #del EmbedNegA
-
-                    if (Embed['NegIdxB1'].nelement() > 1) & (Embed['NegIdxB1'].shape[0] > 1):
-                        Embed['NegIdxB1'], Embed['NegIdxB2'] = Embed['NegIdxB1'].to(device), Embed['NegIdxB2'].to(
-                            device)
-                        EmbedNegB = net(Embed['NegIdxB1'], Embed['NegIdxB2'])
-
-                        neg_loss2 = PairwiseLoss(EmbedNegB['Hybrid1'], EmbedNegB['Hybrid2'])
-                        loss     -= neg_loss2
-                        neg_loss += neg_loss2.item()
-
-
-                    del Embed, EmbedPos
-
-                    running_loss_neg += neg_loss
-                    running_loss_pos += pos_loss
-                else:
-                        pos1, pos2 = pos1.to(device), pos2.to(device)
-
-
-                        #loss  = HardTrainingLoss(net, pos1, pos2,PosRatio=0.25,MarginRatio=0.25,T=1,device=device)
-                        #loss += HardTrainingLoss(net, pos2, pos1, PosRatio=0.25, MarginRatio=0.25, T=1, device=device)
-
-                        Embed = net(pos1, pos2,DropoutP=DropoutP)
-                        loss = criterion(Embed['Hybrid1'], Embed['Hybrid2']) + criterion(Embed['Hybrid2'],Embed['Hybrid1'])
-                        #loss += Random(Embed['Hybrid1'], Embed['Hybrid2'])    + Random(Embed['Hybrid2'],Embed['Hybrid1'])
-                        #loss += Hardest(Embed['Hybrid1'], Embed['Hybrid2']) + Hardest(Embed['Hybrid2'],Embed['Hybrid1'])
-                        #loss  = HardTrainingLoss(net, pos1, pos2, PosRatio=1, MarginRatio=1.0/2, T=1, device=device)
-                        #loss += HardTrainingLoss(net, pos2, pos1, PosRatio=1, MarginRatio=1.0/4, T=1, device=device)
-
-                        #loss += InnerProductLoss(Embed['EmbAsym1'], Embed['EmbSym1']) + InnerProductLoss(Embed['EmbAsym2'],Embed['EmbSym2'])
-                        loss += criterion(Embed['EmbSym1'], Embed['EmbSym2']) + criterion(Embed['EmbSym2'], Embed['EmbSym1'])
-                        #loss +=criterion(Embed['EmbAsym1'], Embed['EmbAsym2'])+criterion(Embed['EmbAsym2'], Embed['EmbAsym1'])
-                        #loss += loss1
-
-                        #TrainFpr = ComputeFPR(Embed['Hybrid1'], Embed['Hybrid2'], FPR95 * 0.9, FPR95 * 1.1)
-                        # print('TrainFpr = ' + repr(TrainFpr))
+                loss += criterion(Embed['EmbSym1'], Embed['EmbSym2']) + criterion(Embed['EmbSym2'], Embed['EmbSym1'])
+                #loss +=criterion(Embed['EmbAsym1'], Embed['EmbAsym2'])+criterion(Embed['EmbAsym2'], Embed['EmbAsym1'])
 
 
 
@@ -530,7 +476,6 @@ if __name__ == '__main__':
                     running_loss_neg /= i
                     running_loss_pos /= i
 
-                    #print('running_loss_neg: ' + repr(100*running_loss_neg)[0:5] + ' running_loss_pos: ' + repr(100*running_loss_pos)[0:5])
 
                 # val accuracy
                 net.eval()
@@ -548,11 +493,14 @@ if __name__ == '__main__':
                 if i > 0:
                     print('FPR95: ' + repr(CurrentFPR95)[0:4] + ' Loss= ' + repr(running_loss)[0:6])
 
-                if (net.module.Mode == 'Hybrid1') | (net.module.Mode == 'Hybrid2'):
+                if (net.module.Mode == 'Hybrid1') or (net.module.Mode == 'Hybrid2'):
                     net.module.Mode = 'Hybrid'
 
-                if (net.module.Mode == 'PairwiseSymmetricAttention1') | (net.module.Mode == 'PairwiseSymmetricAttention2'):
+                if (net.module.Mode == 'PairwiseSymmetricAttention1') or (net.module.Mode == 'PairwiseSymmetricAttention2'):
                     net.module.Mode = 'PairwiseSymmetricAttention'
+
+                if (net.module.Mode == 'PairwiseAsymmetricAttention1') or (net.module.Mode == 'PairwiseAsymmetricAttention2'):
+                    net.module.Mode = 'PairwiseAsymmetricAttention'
 
                 print('FPR95 changed: ' + repr(FPR95)[0:5])
 
@@ -584,11 +532,14 @@ if __name__ == '__main__':
 
                 del EmbTest1, EmbTest2
 
-                if (net.module.Mode == 'Hybrid1') | (net.module.Mode == 'Hybrid2'):
+                if (net.module.Mode == 'Hybrid1') or (net.module.Mode == 'Hybrid2'):
                     net.module.Mode = 'Hybrid'
 
-                if (net.module.Mode == 'PairwiseSymmetricAttention1') | (net.module.Mode == 'PairwiseSymmetricAttention2'):
+                if (net.module.Mode == 'PairwiseSymmetricAttention1') or (net.module.Mode == 'PairwiseSymmetricAttention2'):
                     net.module.Mode = 'PairwiseSymmetricAttention'
+
+                if (net.module.Mode == 'PairwiseAsymmetricAttention1') or (net.module.Mode == 'PairwiseAsymmetricAttention2'):
+                    net.module.Mode = 'PairwiseAsymmetricAttention'
 
                 state = {'epoch': epoch,
                          'state_dict': net.module.state_dict(),
@@ -609,10 +560,12 @@ if __name__ == '__main__':
                          'Loss': criterion.Mode,
                          'FPR95': FPR95}
 
-                if (TotalTestError < LowestError):
-                    LowestError = TotalTestError
+                #if (TotalTestError < LowestError):
+                if (ValError < LowestError):
+                    #LowestError = TotalTestError
+                    LowestError = ValError
 
-                    print(colored('Best error found and saved: ' + repr(LowestError)[0:5], 'red', attrs=['reverse', 'blink']))
+                    print(colored('Best error found and saved: ' + repr(TotalTestError)[0:5], 'red', attrs=['reverse', 'blink']))
                     #print('Best error found and saved: ' + repr(LowestError)[0:5])
                     filepath = ModelsDirName + BestFileName + '.pth'
                     torch.save(state, filepath)
