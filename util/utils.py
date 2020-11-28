@@ -336,3 +336,18 @@ class _RepeatSampler(object):
     def __iter__(self):
         while True:
             yield from iter(self.sampler)
+
+
+
+
+class MyGradScaler:
+    def __init__(self):
+        pass
+    def scale(self, loss):
+        return loss
+    def unscale_(self, optimizer):
+        pass
+    def step(self, optimizer):
+        optimizer.step()
+    def update(self):
+        pass

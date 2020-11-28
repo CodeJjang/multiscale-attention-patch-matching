@@ -25,7 +25,7 @@ from network.losses import InnerProduct, FindFprTrainingSet, FPRLoss, PairwiseLo
 from network.losses import Compute_FPR_HardNegatives, ComputeFPR
 
 from util.read_matlab_imdb import read_matlab_imdb
-from util.utils import LoadModel,MultiEpochsDataLoader
+from util.utils import LoadModel,MultiEpochsDataLoader,MyGradScaler
 
 import warnings
 warnings.filterwarnings("ignore", message="UserWarning: albumentations.augmentations.transforms.RandomResizedCrop")
@@ -56,7 +56,12 @@ if __name__ == '__main__':
     # TrainFile = './data/Vis-Nir_grid/Vis-Nir_grid_Train.hdf5'
     TestDecimation = 10
     FPR95 = 0.8
-    MaxNoImages = 400
+
+    UseMixedPrecision = False
+    if UseMixedPrecision:
+        scaler = torch.cuda.amp.GradScaler(enabled=False)
+    else:
+        scaler = MyGradScaler()
 
     writer = SummaryWriter(LogsDirName)
     LowestError = 1e10
@@ -126,6 +131,8 @@ if __name__ == '__main__':
         StartBestModel = False
         UseBestScore   = False
 
+
+
     if True:
         GeneratorMode = 'Pairwise'
         CnnMode = 'PairwiseAsymmetric'
@@ -164,12 +171,18 @@ if __name__ == '__main__':
         Description = 'PairwiseAsymmetric'
 
 
+
+
     if False:
         GeneratorMode = 'Pairwise'
         # CnnMode            = 'HybridRot'
         CnnMode = 'Hybrid'
+        CnnMode = 'AttenHybrid'
 
-        criterion = OnlineHardNegativeMiningTripletLoss(margin=1, Mode="Random",device=device)
+        NegativeMiningMode = 'Random'
+        #NegativeMiningMode = 'Hardest'
+
+        criterion = OnlineHardNegativeMiningTripletLoss(margin=1, Mode=NegativeMiningMode,device=device)
         #criterion = OnlineHardNegativeMiningTripletLoss(margin=1, Mode="Hardest",device=device)
         #criterion        = OnlineHardNegativeMiningTripletLoss(margin=1, Mode='HardPos', MarginRatio=1.0/4, PosRatio=1./4)
         #HardestCriterion = OnlineHardNegativeMiningTripletLoss(margin=1, Mode='Hardest')
@@ -179,14 +192,17 @@ if __name__ == '__main__':
         PairwiseLoss      = PairwiseLoss()
 
         InitializeOptimizer = True
-        UseWarmUp = True
+        UseWarmUp           = True
+
         StartBestModel = False
         UseBestScore = False
 
-        OuterBatchSize = 12*2#24  # 24
-        InnerBatchSize = 12*2#24  # 24
-        LearningRate =  0#1e-1
-        DropoutP = 0.0
+        LearningRate = 1e-1
+        OuterBatchSize = 2*12
+        InnerBatchSize = 2*12
+
+
+        DropoutP = 0.5
         weight_decay= 0#1e-5
 
         TestMode = False
@@ -204,9 +220,6 @@ if __name__ == '__main__':
         Augmentation["VerticalFlip"] = True
         Augmentation["Rotate90"] = True
         Augmentation["RandomCrop"] = {'Do': True, 'MinDx': 0, 'MaxDx': 0.2, 'MinDy': 0, 'MaxDy': 0.2}
-
-
-        MaxNoImages = 400
 
 
 
@@ -346,8 +359,9 @@ if __name__ == '__main__':
         running_loss_neg = 0
         optimizer.zero_grad()
 
-        print('\n' + colored('Gain1 = ' +repr(net.module.Gain1.item())[0:6], 'cyan', attrs=['reverse', 'blink']))
-        print('\n' + colored('Gain2 = ' +repr(net.module.Gain2.item())[0:6], 'cyan', attrs=['reverse', 'blink']))
+        print('\n' + colored('Gain = ' + repr(net.module.Gain.item())[0:6], 'cyan', attrs=['reverse', 'blink']))
+        #print('\n' + colored('Gain1 = ' +repr(net.module.Gain1.item())[0:6], 'cyan', attrs=['reverse', 'blink']))
+        #print('\n' + colored('Gain2 = ' +repr(net.module.Gain2.item())[0:6], 'cyan', attrs=['reverse', 'blink']))
 
 
         #warmup
@@ -357,13 +371,13 @@ if __name__ == '__main__':
             scheduler_warmup.step()
         else:
             if epoch > StartEpoch:
-                print('CurrentError=' + repr(TotalTestError)[0:8])
+                print('CurrentError=' + repr(ValError)[0:8])
 
                 if type(scheduler).__name__ == 'StepLR':
                     scheduler.step()
 
                 if type(scheduler).__name__ == 'ReduceLROnPlateau':
-                    scheduler.step(TotalTestError)
+                    scheduler.step(ValError)
 
         running_loss = 0
         #scheduler_warmup.step(epoch-StartEpoch,running_loss)
@@ -420,6 +434,9 @@ if __name__ == '__main__':
         bar = tqdm(Training_DataLoader, 0, leave=False)
         for i, Data in enumerate(bar):
 
+            # zero the parameter gradients
+            optimizer.zero_grad()
+
             net = net.train()
 
             # get the inputs
@@ -433,19 +450,20 @@ if __name__ == '__main__':
 
             if (CnnMode == 'PairwiseAsymmetric') or (CnnMode == 'PairwiseSymmetric') or (CnnMode == 'PairwiseSymmetricAttention') or (CnnMode == 'PairwiseAsymmetricAttention'):
 
-                pos1, pos2     = pos1.to(device), pos2.to(device)
+                pos1, pos2 = pos1.to(device), pos2.to(device)
+
+                #with torch.cuda.amp.autocast():
                 Embed = net(pos1, pos2,DropoutP=DropoutP)
                 loss           = criterion(Embed['Emb1'], Embed['Emb2']) + criterion(Embed['Emb2'], Embed['Emb1'])
 
 
-            if CnnMode == 'Hybrid':
-
-                # GPUtil.showUtilization()
+            if (CnnMode == 'Hybrid') or (CnnMode == 'AttenHybrid'):
                 pos1, pos2 = pos1.to(device), pos2.to(device)
 
+                # GPUtil.showUtilization()
+                #with torch.cuda.amp.autocast():
                 Embed = net(pos1, pos2,DropoutP=DropoutP)
                 loss = criterion(Embed['Hybrid1'], Embed['Hybrid2']) + criterion(Embed['Hybrid2'],Embed['Hybrid1'])
-
                 loss += criterion(Embed['EmbSym1'], Embed['EmbSym2']) + criterion(Embed['EmbSym2'], Embed['EmbSym1'])
                 #loss +=criterion(Embed['EmbAsym1'], Embed['EmbAsym2'])+criterion(Embed['EmbAsym2'], Embed['EmbAsym1'])
 
@@ -453,11 +471,18 @@ if __name__ == '__main__':
 
             # backward + optimize
             loss.backward()
+            #scaler.scale(loss).backward()
+
+            clipping_value = 1
+            #torch.nn.utils.clip_grad_norm_(net.parameters(), clipping_value)
 
             optimizer.step()  # Now we can do an optimizer step
+            #scaler.step(optimizer)
 
-            # zero the parameter gradients
-            optimizer.zero_grad()
+            # Updates the scale for next iteration
+            #scaler.update()
+
+
 
             running_loss     += loss.item()
 
@@ -502,6 +527,10 @@ if __name__ == '__main__':
                 if (net.module.Mode == 'PairwiseAsymmetricAttention1') or (net.module.Mode == 'PairwiseAsymmetricAttention2'):
                     net.module.Mode = 'PairwiseAsymmetricAttention'
 
+                if (net.module.Mode == 'AttenHybrid1') or (net.module.Mode == 'AttenHybrid2'):
+                    net.module.Mode = 'AttenHybrid'
+
+
                 print('FPR95 changed: ' + repr(FPR95)[0:5])
 
                 # compute stats
@@ -540,6 +569,10 @@ if __name__ == '__main__':
 
                 if (net.module.Mode == 'PairwiseAsymmetricAttention1') or (net.module.Mode == 'PairwiseAsymmetricAttention2'):
                     net.module.Mode = 'PairwiseAsymmetricAttention'
+
+                if (net.module.Mode == 'AttenHybrid1') or (net.module.Mode == 'AttenHybrid2'):
+                    net.module.Mode = 'AttenHybrid'
+
 
                 state = {'epoch': epoch,
                          'state_dict': net.module.state_dict(),

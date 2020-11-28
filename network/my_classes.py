@@ -550,6 +550,20 @@ class MetricLearningCnn(nn.Module):
                 return self
             return self
 
+        if (Mode == 'AttenHybrid'):
+            if ChannelId == 0:
+                self.Mode = 'AttenHybrid1'
+                return self
+
+            if ChannelId == 1:
+                self.Mode = 'AttenHybrid2'
+                return self
+            return self
+
+
+
+
+
 
     def FreezeSymmetricCnn(self,OnOff):
         self.netS.FreezeCnn(OnOff)
@@ -575,6 +589,7 @@ class MetricLearningCnn(nn.Module):
 
 
     #output CNN
+    #@torch.cuda.amp.autocast()
     def forward(self,S1A, S1B=0,Mode = -1,DropoutP = 0.0):
 
         if (S1A.nelement() == 0):
@@ -639,10 +654,9 @@ class MetricLearningCnn(nn.Module):
 
 
         if (Mode == 'Hybrid') :
-            #p: probability of an element to be zeroed.Default: 0.5
-            DropoutP1 = 0
 
-            Result = dict()
+            # p: probability of an element to be zeroed.Default: 0.5
+            DropoutP1 = 0
 
             # source#1: vis
             # channel1
@@ -691,6 +705,69 @@ class MetricLearningCnn(nn.Module):
             if torch.any(torch.isnan(Hybrid1)) or torch.any(torch.isnan(Hybrid2)):
                 print('Nan found')
 
+            Result = dict()
+            Result['Hybrid1']  = Hybrid1
+            Result['Hybrid2']  = Hybrid2
+            Result['EmbSym1']  = EmbSym1
+            Result['EmbSym2']  = EmbSym2
+            Result['EmbAsym1'] = EmbAsym1
+            Result['EmbAsym2'] = EmbAsym2
+            return Result
+
+
+
+        if (Mode == 'AttenHybrid'):
+
+            # p: probability of an element to be zeroed.Default: 0.5
+            DropoutP1 = 0
+
+            # source#1: vis
+            # channel1
+            EmbSym1  = self.AttenS(S1A, ActivMode=True, DropoutP=DropoutP)
+            EmbAsym1 = self.AttenAS1(S1A, ActivMode=True, DropoutP=DropoutP)
+
+            # concat embeddings and apply relu: K+K=256
+            #Hybrid1 = torch.cat((EmbSym1, EmbAsym1), 1)
+
+            Hybrid1 = EmbSym1+self.Gain*EmbAsym1
+            #Hybrid1 = F.normalize(Hybrid1, dim=1, p=2)
+
+
+            Hybrid1 = F.relu(Hybrid1)
+            #Hybrid1 = Dropout(DropoutP)(Hybrid1)  # 20% probabilit
+
+            # prepare output
+            #Hybrid1 = self.fc1(Hybrid1)
+            Hybrid1 = self.fc1A(Hybrid1)
+            #Hybrid1 = self.fc1B(self.fc1A(Hybrid1))
+
+            Hybrid1 = F.normalize(Hybrid1, dim=1, p=2)
+
+
+
+            # channel2
+            EmbSym2  = self.AttenS(S1B, ActivMode=True, DropoutP=DropoutP)
+            EmbAsym2 = self.AttenAS2(S1B, ActivMode=True, DropoutP=DropoutP)
+
+            # concat embeddings and apply relu: K+K=256
+            #Hybrid2 = torch.cat((EmbSym2, EmbAsym2), 1)
+
+            Hybrid2 = EmbSym2+self.Gain*EmbAsym2
+            #Hybrid2 = F.normalize(Hybrid2, dim=1, p=2)
+
+            Hybrid2 = F.relu(Hybrid2)
+
+
+            # prepare output
+            #Hybrid2 = self.fc2(Hybrid2)
+            Hybrid2 = self.fc2A(Hybrid2)
+
+            Hybrid2 = F.normalize(Hybrid2, dim=1, p=2)
+
+            if torch.any(torch.isnan(Hybrid1)) or torch.any(torch.isnan(Hybrid2)):
+                print('Nan found')
+
+            Result = dict()
             Result['Hybrid1']  = Hybrid1
             Result['Hybrid2']  = Hybrid2
             Result['EmbSym1']  = EmbSym1
@@ -702,20 +779,30 @@ class MetricLearningCnn(nn.Module):
 
 
 
-
         if (Mode == 'Hybrid1'):
             # source#1: vis
-            EmbSym1 = self.netS(S1A, 'Normalized')
-            EmbAsym1 = self.netAS1(S1A, 'Normalized')
+            # p: probability of an element to be zeroed.Default: 0.5
+            DropoutP1 = 0
+
+
+            # source#1: vis
+            # channel1
+            EmbSym1 = self.netS(S1A, 'Normalized', DropoutP=DropoutP1)
+            EmbAsym1 = self.netAS1(S1A, 'Normalized', DropoutP=DropoutP1)
 
             # concat embeddings and apply relu: K+K=256
-            #Hybrid1 = torch.cat((EmbSym1, EmbAsym1), 1)
-            Hybrid1 = EmbSym1+self.Gain1*EmbAsym1
+            # Hybrid1 = torch.cat((EmbSym1, EmbAsym1), 1)
+
+            Hybrid1 = EmbSym1 + self.Gain1 * EmbAsym1
+            # Hybrid1 = F.normalize(Hybrid1, dim=1, p=2)
+
             Hybrid1 = F.relu(Hybrid1)
+            # Hybrid1 = Dropout(DropoutP)(Hybrid1)  # 20% probabilit
 
             # prepare output
-            #Hybrid1 = self.fc1(Hybrid1)
+            # Hybrid1 = self.fc1(Hybrid1)
             Hybrid1 = self.fc1A(Hybrid1)
+            # Hybrid1 = self.fc1B(self.fc1A(Hybrid1))
 
             Hybrid1 = F.normalize(Hybrid1, dim=1, p=2)
 
@@ -741,6 +828,64 @@ class MetricLearningCnn(nn.Module):
             Hybrid2 = F.normalize(Hybrid2, dim=1, p=2)
 
             return Hybrid2
+
+
+
+
+        if (Mode == 'AttenHybrid1'):
+
+            # p: probability of an element to be zeroed.Default: 0.5
+            DropoutP1 = 0
+
+            # source#1: vis
+            # channel1
+            EmbSym1 = self.AttenS(S1A, ActivMode=True, DropoutP=DropoutP)
+            EmbAsym1 = self.AttenAS1(S1A, ActivMode=True, DropoutP=DropoutP)
+
+            # concat embeddings and apply relu: K+K=256
+            # Hybrid1 = torch.cat((EmbSym1, EmbAsym1), 1)
+
+            Hybrid1 = EmbSym1 + self.Gain * EmbAsym1
+            # Hybrid1 = F.normalize(Hybrid1, dim=1, p=2)
+
+            Hybrid1 = F.relu(Hybrid1)
+            # Hybrid1 = Dropout(DropoutP)(Hybrid1)  # 20% probabilit
+
+            # prepare output
+            # Hybrid1 = self.fc1(Hybrid1)
+            Hybrid1 = self.fc1A(Hybrid1)
+            # Hybrid1 = self.fc1B(self.fc1A(Hybrid1))
+
+            Hybrid1 = F.normalize(Hybrid1, dim=1, p=2)
+
+            return Hybrid1
+
+
+
+        if (Mode == 'AttenHybrid2'):
+
+            DropoutP1 = 0
+
+            # channel2
+            EmbSym2 = self.AttenS(S1A, ActivMode=True, DropoutP=DropoutP)
+            EmbAsym2 = self.AttenAS2(S1A, ActivMode=True, DropoutP=DropoutP)
+
+            # concat embeddings and apply relu: K+K=256
+            # Hybrid2 = torch.cat((EmbSym2, EmbAsym2), 1)
+
+            Hybrid2 = EmbSym2 + self.Gain * EmbAsym2
+            # Hybrid2 = F.normalize(Hybrid2, dim=1, p=2)
+
+            Hybrid2 = F.relu(Hybrid2)
+
+            # prepare output
+            # Hybrid2 = self.fc2(Hybrid2)
+            Hybrid2 = self.fc2A(Hybrid2)
+
+            Hybrid2 = F.normalize(Hybrid2, dim=1, p=2)
+
+            return Hybrid2
+
 
 
 
