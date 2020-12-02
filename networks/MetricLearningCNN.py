@@ -8,7 +8,7 @@ from layers.L2Norm import L2Norm
 
 
 class MetricLearningCNN(nn.Module):
-    def __init__(self, mode, use_gru, arch_version):
+    def __init__(self, mode, use_gru, arch_version, gru_layers):
         super(MetricLearningCNN, self).__init__()
 
         self.mode = mode
@@ -32,7 +32,7 @@ class MetricLearningCNN(nn.Module):
 
         self.use_gru = use_gru
         if use_gru:
-            self.gru_layers = 2
+            self.gru_layers = gru_layers
             self.arch_version = arch_version
             if arch_version == 1:
                 self.gru = nn.GRU(128, 128, num_layers=self.gru_layers, batch_first=True)
@@ -112,13 +112,15 @@ class MetricLearningCNN(nn.Module):
         self.netAS2.freeze()
 
     def pairwise_symmetric_gru(self, S1A, S1B):
-        output1 = self.netS(S1A, mode='NoFC')  # (384, 128, 29, 29)
-        output2 = self.netS(S1B, mode='NoFC')
+        output1 = self.netS(S1A, mode='NoPooling')  # (384, 128, 29, 29)
+        output2 = self.netS(S1B, mode='NoPooling')
         batch_size = output1.shape[0]
         feature_size = output1.shape[1]
         sequence_len = output1.shape[2] * output1.shape[3]
         output1 = output1.reshape(batch_size, feature_size, sequence_len).permute(0, 2, 1)
         output2 = output2.reshape(batch_size, feature_size, sequence_len).permute(0, 2, 1)
+        output1 = L2Norm()(output1)
+        output2 = L2Norm()(output2)
         if self.arch_version == 1:
             _, gru_last_output1 = self.gru(output1)
             _, gru_last_output2 = self.gru(output2)
@@ -127,6 +129,8 @@ class MetricLearningCNN(nn.Module):
             gru_last_output2 = gru_last_output2[self.gru_layers - 1]
             output1 = gru_last_output1.squeeze()
             output2 = gru_last_output2.squeeze()
+            # output1 = Dropout()(output1)
+            # output2 = Dropout()(output2)
             output1 = self.fc4(output1).squeeze()
             output2 = self.fc4(output2).squeeze()
             output1 = L2Norm()(output1)  # (384, 128)

@@ -4,6 +4,8 @@ import torch
 import GPUtil
 import matplotlib.pyplot as plt
 from mpl_toolkits.axes_grid1 import ImageGrid
+from pathlib import Path
+from shutil import copyfile
 
 
 def get_torch_device():
@@ -151,3 +153,7 @@ def imshow(img):
     npimg = img.numpy()
     plt.imshow(np.transpose(npimg, (1, 2, 0)))
     plt.show()
+
+
+def is_file_exist(fpath):
+    return Path(fpath).is_file()

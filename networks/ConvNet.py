@@ -47,7 +47,6 @@ class ConvNet(nn.Module):
         self.fc1 = nn.Sequential(
             nn.Linear(10880, 128),
         )
-        return
 
     def input_norm(self, x):
         # flat = x.view(x.size(0), -1)
@@ -63,10 +62,10 @@ class ConvNet(nn.Module):
 
     def forward(self, input1, mode='Normalized'):
         bs = input1.size(0)
-        feat = self.block(self.input_norm(input1))
+        feat = self.block(self.input_norm(input1)) # (batch, 128, 29, 29)
 
-        if mode == 'NoFC':
-            return feat # (batch, 128, 29, 29)
+        if mode == 'NoPooling':
+            return feat
 
         spp_a = spatial_pyramid_pool(feat, bs, [int(feat.size(2)), int(feat.size(3))], self.output_num)
 
