@@ -22,7 +22,9 @@ from losses import Compute_FPR_HardNegatives, ComputeFPR
 from utils import get_torch_device
 from datasets.PairwiseTriplets import PairwiseTriplets
 import warnings
-from utils import NormalizeImages, FPR95Accuracy, EvaluateNet
+from utils import NormalizeImages, FPR95Accuracy, EvaluateNet, is_file_exist
+import shutil
+
 
 warnings.filterwarnings("ignore", message="UserWarning: albumentations.augmentations.transforms.RandomResizedCrop")
 
@@ -345,11 +347,15 @@ def load_trainval_dataset(trainval_dir, augmentations, generator_mode, batch_siz
     return train_loader, val_loader
 
 
-def load_checkpoint(models_dir_name, continue_from_best_model, best_file_name, net, optimizer, added_layers):
+def load_checkpoint(models_dir_name, continue_from_best_model, best_file_name, best_model_path, net, optimizer, added_layers):
     print('Continuing from checkpoint')
     if continue_from_best_model:
         print('Loading best model')
-        model_checkpoints = glob.glob(os.path.join(models_dir_name, best_file_name))
+        curr_path = os.path.join(models_dir_name, best_file_name)
+        if not is_file_exist(curr_path):
+            print('Copying best model to this experiment...')
+            shutil.copyfile(best_model_path, curr_path)
+        model_checkpoints = glob.glob(curr_path)
     else:
         print('Loading last model')
         model_checkpoints = glob.glob(os.path.join(models_dir_name, "visnir*"))
@@ -418,6 +424,7 @@ def parse_args():
     parser.add_argument('--use-gru', type=bool, const=True, default=False,
                         nargs='?', help='whether to use GRU in network')
     parser.add_argument('--arch-version', type=int, help='version of architecture')
+    parser.add_argument('--gru-layers', type=int, help='number of gru layers', default=2)
     parser.add_argument('--freeze-symmetric', type=bool, const=True, default=False,
                         nargs='?', help='whether to freeze symmetric cnn')
     parser.add_argument('--freeze-asymmetric', type=bool, const=True, default=False,
@@ -428,6 +435,7 @@ def parse_args():
     parser.add_argument('--ohem-mode', help='online hard example mining mode', choices=['random', 'hard'])
     parser.add_argument('--take-best-current-model', type=bool, const=True, default=False,
                         nargs='?', help='whether to ignore lowest_error from checkpoint and just take the best current model the run generates')
+    parser.add_argument('--best-model-path', help='path to best model to start from')
     return parser.parse_args()
 
 
@@ -484,9 +492,9 @@ def main():
         pairwise_triplets_batch_size = args.pairs_triplets_batch_size
         augmentations["Test"] = {'Do': False}
         augmentations["HorizontalFlip"] = True
-        augmentations["VerticalFlip"] = True
-        augmentations["Rotate90"] = True
-        augmentations["RandomCrop"] = {'Do': True, 'MinDx': 0, 'MaxDx': 0.2, 'MinDy': 0, 'MaxDy': 0.2}
+        # augmentations["VerticalFlip"] = True
+        # augmentations["Rotate90"] = True
+        # augmentations["RandomCrop"] = {'Do': True, 'MinDx': 0, 'MaxDx': 0.2, 'MinDy': 0, 'MaxDy': 0.2}
         grad_accumulation_steps = 1
 
         freeze_symmetric_cnn = args.freeze_symmetric
@@ -552,12 +560,12 @@ def main():
                                                      pairwise_triplets_batch_size)
     test_loaders = load_test_datasets(args.test, batch_size)
 
-    net = MetricLearningCNN(cnn_mode, args.use_gru, args.arch_version)
-    optimizer = torch.optim.Adam(net.parameters(), lr=lr, weight_decay=0)
+    net = MetricLearningCNN(cnn_mode, args.use_gru, args.arch_version, args.gru_layers)
+    optimizer = torch.optim.Adam(net.parameters(), lr=lr, weight_decay=1e-8)
     start_epoch = 0
     if args.continue_from_checkpoint:
         start_epoch, lowest_error, loaded_FPR95 = load_checkpoint(models_dir_name, args.continue_from_best_model,
-                                                                  best_file_name, net,
+                                                                  best_file_name, args.best_model_path, net,
                                                                   optimizer,
                                                                   args.added_layers)
         if args.take_best_current_model:
