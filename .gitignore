@@ -9,4 +9,4 @@ logs*/
 data/
 detection/
 *.rar
-
+.idea/

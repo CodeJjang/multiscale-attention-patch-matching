@@ -16,7 +16,7 @@ import albumentations as A
 from network.positional_encodings  import PositionalEncoding2D
 from network.spp_layer import spatial_pyramid_pool
 from network.transformer import Transformer, TransformerDecoder, TransformerDecoderLayer, TransformerEncoder, TransformerEncoderLayer
-
+from PIL import Image
 
 
 def separate_cnn_paras(modules):
@@ -49,12 +49,6 @@ def ComputeAllErros(TestData,net,device,StepSize):
 
 
 
-
-
-def NormalizeImages(x):
-    #Result = (x/255.0-0.5)/0.5
-    Result = x / (255.0/2)
-    return Result
 
 
 
@@ -120,7 +114,7 @@ def EvaluateNet(net,data,device,StepSize):
 
 
 
-def EvaluateDualNets(net,Data1, Data2,device,StepSize,p=0):
+def EvaluateDualNets(net,Data1, Data2,CnnMode,device,StepSize):
     with torch.no_grad():
 
         for k in range(0, Data1.shape[0], StepSize):
@@ -131,7 +125,7 @@ def EvaluateDualNets(net,Data1, Data2,device,StepSize,p=0):
 
             # ShowTwoRowImages(a[0:10,0,:,:], b[0:10,0,:,:])
             a,b = a.to(device),b.to(device)
-            x = net(a,b ,p=p)
+            x = net(a,b,CnnMode)
 
             if k == 0:
                 keys = list(x.keys())
@@ -147,32 +141,6 @@ def EvaluateDualNets(net,Data1, Data2,device,StepSize,p=0):
 
 
 
-
-def EvaluateSofmaxNet(net,Labels,device,Data,StepSize):
-
-    with torch.no_grad():
-        ValAccuracy = 0
-        PosValAccuracy = 0
-        NegValAccuracy = 0
-        m = 0
-        for k in range(0, Data.shape[0], StepSize):
-            x = Data[k:min(k + StepSize,Data.shape[0]), :, :, :, :]
-            # ShowTwoRowImages(x[0:3, :, :, 0], x[0:3, :, :, 1])
-            a = x[:, :, :, :, 0]  # - my_training_Dataset.VisAvg
-            b = x[:, :, :, :, 1]  # - my_training_Dataset.IrAvg
-            # ShowTwoRowImages(a[0:10,0,:,:], b[0:10,0,:,:])
-            a, b = a.to(device), b.to(device)
-
-            Emb = net(a, b)
-            Vals,EstimatedValLabels = torch.max(Emb, 1)
-
-            CurrentLabels = Labels[k:(k + StepSize)]
-            ValAccuracy += torch.mean((EstimatedValLabels.cpu() != CurrentLabels.cpu()).type(torch.DoubleTensor))
-            m = m + 1
-
-        ValAccuracy /= m
-
-        return ValAccuracy.numpy(),Emb
 
 
 
@@ -226,141 +194,6 @@ def imshow(img):
     npimg = img.numpy()
     plt.imshow(np.transpose(npimg, (1, 2, 0)))
     plt.show()
-
-
-
-
-
-
-
-
-
-class DatasetPairwiseTriplets(data.Dataset):
-    'Characterizes a dataset for PyTorch'
-
-    def __init__(self, Data, Labels,batch_size, Augmentation, Mode,NegativeMode='Random'):
-        'Initialization'
-        self.PositiveIdx = np.squeeze(np.asarray(np.where(Labels == 1)));
-        self.NegativeIdx = np.squeeze(np.asarray(np.where(Labels == 0)));
-
-        self.PositiveIdxNo = len(self.PositiveIdx)
-        self.NegativeIdxNo = len(self.NegativeIdx)
-
-        self.Data   = Data
-        self.Labels = Labels
-
-        self.batch_size = batch_size
-        self.Augmentation = Augmentation
-
-        self.Mode = Mode
-        self.NegativeMode = NegativeMode
-
-        self.ChannelMean1 = Data[:, :, :, 0].mean()
-        self.ChannelMean2 = Data[:, :, :, 1].mean()
-
-        self.RowsNo = Data.shape[1]
-        self.ColsNo = Data.shape[2]
-
-        self.transform = A.ReplayCompose([
-            # A.Transpose(always_apply=False, p=0.5),
-            # A.Flip(always_apply=False, p=0.5),
-            # A.RandomResizedCrop(self.RowsNo, self.ColsNo,scale=(0.9, 1.1) ,ratio=(0.9, 1.1), interpolation=cv2.INTER_CUBIC,always_apply=False,p=0.5),
-            A.Rotate(limit=5, interpolation=cv2.INTER_CUBIC, border_mode=cv2.BORDER_REFLECT_101, always_apply=False,p=0.5),
-            A.HorizontalFlip(always_apply=False, p=0.5),
-            A.VerticalFlip(always_apply=False, p=0.5),
-            #A.RandomBrightnessContrast(brightness_limit=0.2, contrast_limit=0.2, brightness_by_max=True,always_apply=False, p=0.5),
-            #A.RandomGamma(gamma_limit=136, always_apply=False, p=0.5),
-            #A.JpegCompression(quality_lower=40, quality_upper=100, p=0.5),
-            #A.HueSaturationValue(hue_shift_limit=172, sat_shift_limit=20, val_shift_limit=27, always_apply=False, p=0.5)
-        ])
-
-    def __len__(self):
-        'Denotes the total number of samples'
-        return self.Data.shape[0]
-
-    def __getitem__(self, index):
-        'Generates one sample of data'
-
-        # Select pos2 pairs
-        if self.Mode == 'Pairwise':
-            PosIdx = np.random.randint(self.PositiveIdxNo, size=self.batch_size)
-
-        if self.Mode == 'Test':
-            PosIdx = index
-
-
-        PosIdx    = self.PositiveIdx[PosIdx]
-        PosImages = self.Data[PosIdx, :, :, :].astype(np.float32)
-
-        # imshow(torchvision.utils.make_grid(PosImages[0,:,:,0]))
-        # plt.imshow(np.squeeze(PosImages[2040, :, :, :]));  # plt.show()
-
-        pos1 = PosImages[:, :, :, 0]
-        pos2 = PosImages[:, :, :, 1]
-
-        if self.Mode == 'Pairwise':
-            for i in range(0, PosImages.shape[0]):
-
-                # Flip LR
-                if (np.random.uniform(0, 1) > 0.5) & self.Augmentation["HorizontalFlip"]:
-                    pos1[i,] = np.fliplr(pos1[i,])
-                    pos2[i,] = np.fliplr(pos2[i,])
-
-                #flip UD
-                if (np.random.uniform(0, 1) > 0.5) & self.Augmentation["VerticalFlip"]:
-                    pos1[i,] = np.flipud(pos1[i,])
-                    pos2[i,] = np.flipud(pos2[i,])
-
-                #test
-                if self.Augmentation["Test"]['Do']:
-
-                    #plt.imshow(pos1[i,:,:],cmap='gray');plt.show();
-                    data= self.transform(image=pos1[i, :, :])
-                    pos1[i,] = data['image']
-                    pos2[i,] = A.ReplayCompose.replay(data['replay'], image=pos2[i, :, :])['image']
-
-
-                # rotate:0, 90, 180,270,
-                if self.Augmentation["Rotate90"]:
-                    idx = np.random.randint(low=0, high=4, size=1)[0]  # choose rotation
-                    pos1[i,] = np.rot90(pos1[i, ], idx)
-                    pos2[i,] = np.rot90(pos2[i, ], idx)
-
-
-                #random crop
-                if  (np.random.uniform(0, 1) > 0.5) & self.Augmentation["RandomCrop"]['Do']:
-                    dx = np.random.uniform(self.Augmentation["RandomCrop"]['MinDx'], self.Augmentation["RandomCrop"]['MaxDx'])
-                    dy = np.random.uniform(self.Augmentation["RandomCrop"]['MinDy'], self.Augmentation["RandomCrop"]['MaxDy'])
-
-                    dx=dy
-
-                    x0 = int(dx*self.ColsNo)
-                    y0 = int(dy*self.RowsNo)
-
-                    #ShowRowImages(pos1[0:1,:,:])
-                    #plt.imshow(pos1[i,:,:],cmap='gray');plt.show();
-                    #aa = pos1[i,y0:,x0:]
-
-                    pos1[i, ] = resize(pos1[i,y0:,x0:], (self.RowsNo, self.ColsNo))
-
-                    #ShowRowImages(pos1[0:1, :, :])
-
-                    pos2[i,] = resize(pos2[i,y0:,x0:], (self.RowsNo, self.ColsNo))
-
-
-        Result = dict()
-
-        pos1 -= self.ChannelMean1
-        pos2 -= self.ChannelMean2
-
-        Result['pos1']   = NormalizeImages(pos1)
-        Result['pos2']   = NormalizeImages(pos2)
-
-        return Result
-
-
-
-
 
 
 
@@ -465,20 +298,23 @@ def Prepare2DPosEncoding(PosEncodingX,PosEncodingY,RowNo,ColNo):
 
 
 
+def Prepare2DPosEncodingSequence(PosEncodingX,PosEncodingY,RowNo,ColNo):
+    PosEncoding2D = Prepare2DPosEncoding(PosEncodingX, PosEncodingY,RowNo,ColNo)
+
+    PosEncoding = PosEncoding2D.permute(2, 0, 1)
+    PosEncoding = PosEncoding[:, 0:RowNo, 0:ColNo]
+    PosEncoding = PosEncoding.reshape((PosEncoding.shape[0], PosEncoding.shape[1] * PosEncoding.shape[2]))
+    PosEncoding = PosEncoding.permute(1, 0).unsqueeze(1)
+
+    return PosEncoding
+
 
 class MetricLearningCnn(nn.Module):
-    #def __init__(self):
-     #   super(SiameseTripletCnn, self).__init__()
-
 
     def __init__(self,Mode,DropoutP=0):
         super(MetricLearningCnn, self).__init__()
 
         self.Mode   = Mode
-
-        #self.netS   = SingleNet()
-        #self.netAS1 = SingleNet()
-        #self.netAS2 = SingleNet()
 
         self.netS   = Model()
         self.netAS1 = Model()
@@ -498,67 +334,62 @@ class MetricLearningCnn(nn.Module):
 
 
         self.Gain = torch.nn.Parameter(torch.ones(1))
-
         self.Gain1 = torch.nn.Parameter(torch.ones(1))
         self.Gain2 = torch.nn.Parameter(torch.ones(1))
 
 
+        #Decoder parameters
+        self.Query = nn.Parameter(torch.randn(1, K))
+        self.QueryPosEncode = nn.Parameter(torch.randn(1, K))
+
+        NumClasses=1
+        self.DecoderQueries         = nn.Parameter(torch.randn(NumClasses, K))
+
+        self.DecoderQueriesPos      = nn.Parameter(torch.randn(NumClasses, K))
+        self.AsymDecoderQueriesPos1 = nn.Parameter(torch.randn(NumClasses, K))
+        self.AsymDecoderQueriesPos2 = nn.Parameter(torch.randn(NumClasses, K))
+
+        self.AsymDecoderQueries1 = nn.Parameter(torch.randn(NumClasses, K))
+        self.AsymDecoderQueries2 = nn.Parameter(torch.randn(NumClasses, K))
+
+        EmbeddingMaxDim = 20
+        self.PosEncodingX = nn.Parameter(torch.randn(EmbeddingMaxDim, int(K / 2)))
+        self.PosEncodingY = nn.Parameter(torch.randn(EmbeddingMaxDim, int(K / 2)))
 
 
-    def GetChannelCnn(self,ChannelId,Mode):
+        self.output_num = [8, 4, 2,1]
+
+        self.SymDecoderFC   = nn.Linear(8576, K)
+        self.AsymDecoderFC1 = nn.Linear(8576, K)
+        self.AsymDecoderFC2 = nn.Linear(8576, K)
+        #self.SymDecoderFC = nn.Linear(8960, K)
+
+        LayersNo = 2
+        HeadsNo  = 2
+
+        self.Transformer = Transformer(d_model=K, dropout=0.1, nhead=HeadsNo,
+                                           dim_feedforward=K,
+                                           num_encoder_layers=LayersNo,
+                                           num_decoder_layers=LayersNo,
+                                           normalize_before=False, return_intermediate_dec=False)
 
 
-        if (Mode == 'TripletSymmetric') | (Mode == 'PairwiseSymmetric'):
-            return self.netS
+        self.DecoderLayer = TransformerDecoderLayer(d_model=K, nhead=HeadsNo, dim_feedforward=K,
+                                                    dropout=0.1, activation="relu", normalize_before=False)
+        self.SymmetricDecoder = TransformerDecoder(decoder_layer=self.DecoderLayer, num_layers=LayersNo)
 
-        if (Mode == 'TripletAsymmetric') | (Mode == 'PairwiseAsymmetric'):
-            if ChannelId == 0:
-                return self.netAS1
-
-            if ChannelId == 1:
-                return self.netAS2
-
-        if (Mode == 'Hybrid') | (Mode == 'Hybrid1') | (Mode == 'Hybrid2') :
-            if ChannelId == 0:
-                self.Mode = 'Hybrid1'
-                return self
-
-            if ChannelId == 1:
-                self.Mode = 'Hybrid2'
-                return self
-
-
-        if (Mode == 'PairwiseSymmetricAttention') :
-            if ChannelId == 0:
-                self.Mode = 'PairwiseSymmetricAttention1'
-                return self
-
-            if ChannelId == 1:
-                self.Mode = 'PairwiseSymmetricAttention2'
-                return self
-            return self
+        self.AsymmetricDecoder1 = TransformerDecoder(decoder_layer=self.DecoderLayer, num_layers=LayersNo)
+        self.AsymmetricDecoder2 = TransformerDecoder(decoder_layer=self.DecoderLayer, num_layers=LayersNo)
 
 
 
-        if (Mode == 'PairwiseAsymmetricAttention'):
-            if ChannelId == 0:
-                self.Mode = 'PairwiseAsymmetricAttention1'
-                return self
+        self.EncoderLayer = TransformerEncoderLayer(d_model=K, nhead=HeadsNo, dim_feedforward=int(K),
+                                                    dropout=0.1, activation="relu", normalize_before=False)
+        self.SymmetricEncoder = TransformerEncoder(encoder_layer=self.EncoderLayer, num_layers=LayersNo)
 
-            if ChannelId == 1:
-                self.Mode = 'PairwiseAsymmetricAttention2'
-                return self
-            return self
+        self.AsymmetricEncoder1 = TransformerEncoder(encoder_layer=self.EncoderLayer, num_layers=LayersNo)
+        self.AsymmetricEncoder2 = TransformerEncoder(encoder_layer=self.EncoderLayer, num_layers=LayersNo)
 
-        if (Mode == 'AttenHybrid'):
-            if ChannelId == 0:
-                self.Mode = 'AttenHybrid1'
-                return self
-
-            if ChannelId == 1:
-                self.Mode = 'AttenHybrid2'
-                return self
-            return self
 
 
 
@@ -582,14 +413,7 @@ class MetricLearningCnn(nn.Module):
 
 
 
-
-
-
-
-
-
     #output CNN
-    #@torch.cuda.amp.autocast()
     def forward(self,S1A, S1B=0,Mode = -1,DropoutP = 0.0):
 
         if (S1A.nelement() == 0):
@@ -599,21 +423,23 @@ class MetricLearningCnn(nn.Module):
             Mode = self.Mode
 
 
-        if Mode == 'PairwiseSymmetricAttention':
 
-                output1 = self.AttenS(S1A, ActivMode=True, DropoutP=DropoutP)
-                output2 = self.AttenS(S1B, ActivMode=True, DropoutP=DropoutP)
 
-                Result = dict()
-                Result['Emb1'] = output1
-                Result['Emb2'] = output2
+        if Mode == 'SymmetricDecoder':
 
-                return Result
+            output1,ActivMap1 = self.netS(S1A,ActivMode=True, DropoutP=DropoutP)
+            output2,ActivMap2 = self.netS(S1B,ActivMode=True, DropoutP=DropoutP)
 
-        if Mode == 'PairwiseAsymmetricAttention':
+            output1 = self.Symmetric_Encoder_spatial_pyramid_pool_2D(ActivMap1,S1A.size(0),
+                                                                     [int(ActivMap1.size(2)), int(ActivMap1.size(3))])
+            output2 = self.Symmetric_Encoder_spatial_pyramid_pool_2D(ActivMap2,S1A.size(0),
+                                                                     [int(ActivMap1.size(2)), int(ActivMap1.size(3))])
 
-            output1 = self.AttenAS1(S1A, ActivMode=True, DropoutP=DropoutP)
-            output2 = self.AttenAS2(S1B, ActivMode=True, DropoutP=DropoutP)
+            output1 = self.SymDecoderFC(output1)
+            output1 = F.normalize(output1, dim=1, p=2)
+
+            output2 = self.SymDecoderFC(output2)
+            output2 = F.normalize(output2, dim=1, p=2)
 
             Result = dict()
             Result['Emb1'] = output1
@@ -622,7 +448,53 @@ class MetricLearningCnn(nn.Module):
             return Result
 
 
-        if Mode == 'PairwiseSymmetric':
+
+
+        if Mode == 'AsymmetricDecoder':
+
+            output1,ActivMap1 = self.netAS1(S1A,ActivMode=True, DropoutP=DropoutP)
+            output2,ActivMap2 = self.netAS2(S1B,ActivMode=True, DropoutP=DropoutP)
+
+            output1,output2 = self.Asymmetric_Encoder_spatial_pyramid_pool_2D(ActivMap1,ActivMap2,S1A.size(0),
+                                                                     [int(ActivMap1.size(2)), int(ActivMap1.size(3))])
+
+            output1 = self.AsymDecoderFC1(output1)
+            output1 = F.normalize(output1, dim=1, p=2)
+
+            output2 = self.AsymDecoderFC2(output2)
+            output2 = F.normalize(output2, dim=1, p=2)
+
+            Result = dict()
+            Result['Emb1'] = output1
+            Result['Emb2'] = output2
+
+            return Result
+
+
+        if Mode == 'SymmetricAttention':
+
+                output1 = self.AttenS(S1A, DropoutP=DropoutP)
+                output2 = self.AttenS(S1B, DropoutP=DropoutP)
+
+                Result = dict()
+                Result['Emb1'] = output1
+                Result['Emb2'] = output2
+
+                return Result
+
+        if Mode == 'AsymmetricAttention':
+
+            output1 = self.AttenAS1(S1A, DropoutP=DropoutP)
+            output2 = self.AttenAS2(S1B, DropoutP=DropoutP)
+
+            Result = dict()
+            Result['Emb1'] = output1
+            Result['Emb2'] = output2
+
+            return Result
+
+
+        if Mode == 'Symmetric':
 
 
             # source#1: vis
@@ -639,7 +511,7 @@ class MetricLearningCnn(nn.Module):
 
 
 
-        if Mode == 'PairwiseAsymmetric':
+        if Mode == 'Asymmetric':
             # source#1: vis
             output1 = self.netAS1(S1A,DropoutP=DropoutP)
             output2 = self.netAS2(S1B,DropoutP=DropoutP)
@@ -891,28 +763,115 @@ class MetricLearningCnn(nn.Module):
 
 
 
-        if (Mode == 'PairwiseSymmetricAttention1') or (Mode == 'PairwiseSymmetricAttention2'):
+        if (Mode == 'SymmetricAttention1') or (Mode == 'SymmetricAttention2'):
 
             output1 = self.AttenS(S1A, ActivMode=True, DropoutP=DropoutP)
 
             return output1
 
-        if (Mode == 'PairwiseAsymmetricAttention1'):
+        if (Mode == 'AsymmetricAttention1'):
 
             output1 = self.AttenAS1(S1A, ActivMode=True, DropoutP=DropoutP)
 
             return output1
 
-        if (Mode == 'PairwiseAsymmetricAttention2'):
+        if (Mode == 'AsymmetricAttention2'):
 
             output1 = self.AttenAS2(S1A, ActivMode=True, DropoutP=DropoutP)
 
             return output1
 
+    def Symmetric_Encoder_spatial_pyramid_pool_2D(self, Input, num_sample, previous_conv_size):
+        for i in range(len(self.output_num)):
+
+            # Pooling support
+            h_wid = int(math.ceil(previous_conv_size[0] / self.output_num[i]))
+            w_wid = int(math.ceil(previous_conv_size[1] / self.output_num[i]))
+
+            # Padding to retain orgonal dimensions
+            h_pad = int((h_wid * self.output_num[i] - previous_conv_size[0] + 1) / 2)
+            w_pad = int((w_wid * self.output_num[i] - previous_conv_size[1] + 1) / 2)
+
+            # apply pooling
+            maxpool = nn.MaxPool2d((h_wid, w_wid), stride=(h_wid, w_wid), padding=(h_pad, w_pad))
+
+            y = maxpool(Input)
+
+            if (i == 0):
+                spp = y.reshape(num_sample, -1)
+            else:
+                PosEncoding = Prepare2DPosEncodingSequence(self.PosEncodingX,self.PosEncodingY,
+                                                           y.shape[2], y.shape[3])
+                #PosEncoding = torch.cat((self.QueryPosEncode.unsqueeze(0), PosEncoding), 0)
+
+                y = y.reshape((y.shape[0], y.shape[1], y.shape[2] * y.shape[3]))
+                y = y.permute(2, 0, 1)
+
+                y = self.SymmetricEncoder(src=y, pos=PosEncoding)
+
+                DecoderQueries = self.DecoderQueries.unsqueeze(1).repeat(1, y.shape[1], 1)
+                x = self.SymmetricDecoder(tgt=DecoderQueries, memory=y,
+                                           pos=PosEncoding,
+                                           query_pos=self.DecoderQueriesPos.unsqueeze(1))[0]
+                x = x.permute(1, 2, 0)
+
+                spp = torch.cat((spp, x.reshape(num_sample, -1)), 1)
+
+        return spp
 
 
 
 
+    def Asymmetric_Encoder_spatial_pyramid_pool_2D(self, Input1,Input2, num_sample, previous_conv_size):
+        for i in range(len(self.output_num)):
+
+            # Pooling support
+            h_wid = int(math.ceil(previous_conv_size[0] / self.output_num[i]))
+            w_wid = int(math.ceil(previous_conv_size[1] / self.output_num[i]))
+
+            # Padding to retain orgonal dimensions
+            h_pad = int((h_wid * self.output_num[i] - previous_conv_size[0] + 1) / 2)
+            w_pad = int((w_wid * self.output_num[i] - previous_conv_size[1] + 1) / 2)
+
+            # apply pooling
+            maxpool = nn.MaxPool2d((h_wid, w_wid), stride=(h_wid, w_wid), padding=(h_pad, w_pad))
+
+            y1 = maxpool(Input1)
+            y2 = maxpool(Input2)
+
+            if (i == 0):
+                spp1 = y1.reshape(num_sample, -1)
+                spp2 = y2.reshape(num_sample, -1)
+            else:
+                PosEncoding = Prepare2DPosEncodingSequence(self.PosEncodingX, self.PosEncodingY,
+                                                           y1.shape[2], y1.shape[3])
+
+                y1 = y1.reshape((y1.shape[0], y1.shape[1], y1.shape[2] * y1.shape[3]))
+                y1 = y1.permute(2, 0, 1)
+
+                y2 = y2.reshape((y2.shape[0], y2.shape[1], y2.shape[2] * y2.shape[3]))
+                y2 = y2.permute(2, 0, 1)
+
+                y1 = self.AsymmetricEncoder1(src=y1, pos=PosEncoding)
+                y2 = self.AsymmetricEncoder2(src=y2, pos=PosEncoding)
+
+                AsymDecoderQueries1 = self.AsymDecoderQueries1.unsqueeze(1).repeat(1, y1.shape[1], 1)
+                x1 = self.AsymmetricDecoder1(tgt=AsymDecoderQueries1, memory=y1,
+                                           pos=PosEncoding,
+                                           query_pos=self.AsymDecoderQueriesPos1.unsqueeze(1))[0]
+
+                AsymDecoderQueries2 = self.AsymDecoderQueries2.unsqueeze(1).repeat(1, y2.shape[1], 1)
+                x2 = self.AsymmetricDecoder2(tgt=AsymDecoderQueries2, memory=y2,
+                                            pos=PosEncoding,
+                                            query_pos=self.AsymDecoderQueriesPos2.unsqueeze(1))[0]
+
+                x1 = x1.permute(1, 2, 0)
+                x2 = x2.permute(1, 2, 0)
+
+                spp1 = torch.cat((spp1, x1.reshape(num_sample, -1)), 1)
+                spp2 = torch.cat((spp2, x2.reshape(num_sample, -1)), 1)
+
+        return spp1,spp2
 
 
 
@@ -929,7 +888,7 @@ class AttentionEmbeddingCNN(nn.Module):
 
         self.net = Model()
 
-        self.AgeQuery = nn.Parameter(torch.randn(1, K))
+        self.Query = nn.Parameter(torch.randn(1, K))
         self.QueryPosEncode = nn.Parameter(torch.randn(1, K))
 
         EmbeddingMaxDim = 20
@@ -945,9 +904,9 @@ class AttentionEmbeddingCNN(nn.Module):
         EncoderHeadsNo = 2
 
 
-        self.DetrEncoderLayer = TransformerEncoderLayer(d_model=K, nhead=EncoderHeadsNo, dim_feedforward=int(K),
+        self.EncoderLayer = TransformerEncoderLayer(d_model=K, nhead=EncoderHeadsNo, dim_feedforward=int(K),
                                                         dropout=0.1, activation="relu", normalize_before=False)
-        self.DetrEncoder = TransformerEncoder(encoder_layer=self.DetrEncoderLayer, num_layers=EncoderLayersNo)
+        self.Encoder = TransformerEncoder(encoder_layer=self.EncoderLayer, num_layers=EncoderLayersNo)
 
         self.SPFC = nn.Linear(10880, K)
         self.SPFC = nn.Linear(8576, K)
@@ -955,7 +914,7 @@ class AttentionEmbeddingCNN(nn.Module):
         # self.SPFC = nn.Linear(8192, K)
 
 
-    def spatial_pyramid_pool_2D(self, previous_conv, num_sample, previous_conv_size):
+    def Encoder_spatial_pyramid_pool_2D(self, previous_conv, num_sample, previous_conv_size):
         for i in range(len(self.output_num)):
 
             # Pooling support
@@ -987,25 +946,24 @@ class AttentionEmbeddingCNN(nn.Module):
                 x = y.reshape((y.shape[0], y.shape[1], y.shape[2] * y.shape[3]))
                 x = x.permute(2, 0, 1)
 
-                AgeQuery = self.AgeQuery.repeat(1, x.shape[1], 1)
-                x = torch.cat((AgeQuery, x), 0)
-                # x = self.Encoder(src=x)
-                x = self.DetrEncoder(src=x, pos=PosEncoding)
+                Query = self.Query.repeat(1, x.shape[1], 1)
+                x = torch.cat((Query, x), 0)
 
-                # x = x.permute(1, 0, 2)
+                x = self.Encoder(src=x, pos=PosEncoding)
+
                 x = x[0,]
 
                 spp = torch.cat((spp, x.reshape(num_sample, -1)), 1)
 
         return spp
 
-    def forward(self, x,DropoutP,ActivMode=True):
+    def forward(self,x,DropoutP):
 
         output1, ActivMap1 = self.net(x, ActivMode=True, DropoutP=DropoutP)
         #return output1, ActivMap1
 
-        spp_a = self.spatial_pyramid_pool_2D(ActivMap1, x.size(0),
-                                             [int(ActivMap1.size(2)), int(ActivMap1.size(3))])
+        spp_a = self.Encoder_spatial_pyramid_pool_2D(ActivMap1, x.size(0),
+                                                     [int(ActivMap1.size(2)), int(ActivMap1.size(3))])
         Result = self.SPFC(spp_a)
         Result = F.normalize(Result, dim=1, p=2)
 

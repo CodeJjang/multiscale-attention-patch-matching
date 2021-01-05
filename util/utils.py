@@ -2,7 +2,10 @@ import numpy as np
 import torch
 import glob
 import os
+import json
 from torch.optim.lr_scheduler import ReduceLROnPlateau
+
+
 
 def LoadModel(net,StartBestModel,ModelsDirName,BestFileName,UseBestScore,device):
 
@@ -15,7 +18,7 @@ def LoadModel(net,StartBestModel,ModelsDirName,BestFileName,UseBestScore,device)
     if StartBestModel:
         FileList = glob.glob(ModelsDirName + BestFileName + '.pth')
     else:
-        FileList = glob.glob(ModelsDirName + "visnir*")
+        FileList = glob.glob(ModelsDirName + "model*")
 
     if FileList:
         FileList.sort(key=os.path.getmtime)
@@ -351,3 +354,15 @@ class MyGradScaler:
         optimizer.step()
     def update(self):
         pass
+
+
+def save_best_model_stats(dir, epoch, test_err, test_data):
+    content = {
+        'Test error': test_err,
+        'Epoch': epoch
+    }
+    for test_set in test_data:
+        content[f'Test set {test_set} error'] = test_data[test_set]['TestError']
+    fpath = os.path.join(dir, 'visnir_best_model_stats.json')
+    with open(fpath, 'w', encoding='utf-8') as f:
+        json.dump(content, f, ensure_ascii=False, indent=4)

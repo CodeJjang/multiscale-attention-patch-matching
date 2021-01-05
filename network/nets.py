@@ -116,7 +116,7 @@ class Model(nn.Module):
 
         spp_a = Dropout(DropoutP)(spp_a)  # 20% probability
 
-        feature_a = self.fc1(spp_a).view(BatchSize, -1)
+        feature_a = self.fc1(spp_a).reshape(BatchSize, -1)
 
         if Mode ==  'Normalized':
             #return L2Norm()(feature_a)

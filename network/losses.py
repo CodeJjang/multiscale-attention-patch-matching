@@ -301,10 +301,8 @@ class OnlineHardNegativeMiningTripletLoss(nn.Module):
             if torch.isnan(losses):
                 print('Found nan in loss ')
         else:
-            losses = 0
-            print(colored('\n No margin samples', 'magenta', attrs=['reverse', 'blink']))
-            #self.margin *= 1.1
-            print(colored('\n New margin = '+repr(self.margin)[0:4], 'magenta', attrs=['reverse', 'blink']))
+            losses = 0# losses.sum()
+            #print(colored('\n No margin samples', 'magenta', attrs=['reverse', 'blink']))
 
         #return losses, idx.size()[0]/margin.shape[0]
         return losses

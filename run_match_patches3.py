@@ -14,27 +14,44 @@ import torch.nn as nn
 from tqdm import tqdm
 import GPUtil
 import math
-from util.warmup_scheduler import GradualWarmupSchedulerV2
+from pathlib import Path
 
 # my classes
-from network.my_classes import imshow, ShowRowImages, ShowTwoRowImages, EvaluateSofmaxNet, EvaluateDualNets
-from network.my_classes import DatasetPairwiseTriplets, FPR95Accuracy
-from network.my_classes import SingleNet, MetricLearningCnn, EvaluateNet, NormalizeImages
+from network.my_classes import imshow, ShowRowImages, ShowTwoRowImages,EvaluateDualNets
+from network.my_classes import FPR95Accuracy,SingleNet, MetricLearningCnn, EvaluateNet,EvaluateDualNets
+from network.generator import DatasetPairwiseTriplets,NormalizeImages
 from network.losses import ContrastiveLoss, TripletLoss, OnlineTripletLoss, OnlineHardNegativeMiningTripletLoss
 from network.losses import InnerProduct, FindFprTrainingSet, FPRLoss, PairwiseLoss, HardTrainingLoss
 from network.losses import Compute_FPR_HardNegatives, ComputeFPR
-
+from util.warmup_scheduler import GradualWarmupSchedulerV2
 from util.read_matlab_imdb import read_matlab_imdb
-from util.utils import LoadModel,MultiEpochsDataLoader,MyGradScaler
+from util.utils import LoadModel,MultiEpochsDataLoader,MyGradScaler, save_best_model_stats
+from network.nt_xent import NTXentLoss
 
 import warnings
 warnings.filterwarnings("ignore", message="UserWarning: albumentations.augmentations.transforms.RandomResizedCrop")
 
+def assert_dir(dir_path):
+    Path(dir_path).mkdir(parents=True, exist_ok=True)
 
+def load_dataset(ds_name):
+    if ds_name == 'VisNir':
+        test_dir = 'F:\\multisensor\\test\\'
+        train_file = 'F:\\multisensor\\train\\Vis-Nir_Train.hdf5'
+    elif ds_name == 'cuhk':
+        test_dir = 'D:\\multisensor\\datasets\\cuhk\\test\\'
+        train_file = 'D:\\multisensor\\datasets\\cuhk\\train.hdf5'
+    elif ds_name == 'vedai':
+        test_dir = 'D:\\multisensor\\datasets\\vedai\\test\\'
+        train_file = 'D:\\multisensor\\datasets\\vedai\\train.hdf5'
+    elif ds_name == 'visnir-grid':
+        test_dir = 'D:\\multisensor\\datasets\\Vis-Nir_grid\\test\\'
+        train_file = 'D:\\multisensor\\datasets\\Vis-Nir_grid\\train.hdf5'
+    return train_file, test_dir
 
 if __name__ == '__main__':
     np.random.seed(0)
-    device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
+    device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")#"cuda:0"
     NumGpus = torch.cuda.device_count()
     torch.cuda.empty_cache()
     GPUtil.showUtilization()
@@ -43,23 +60,29 @@ if __name__ == '__main__':
     print(device)
     name = torch.cuda.get_device_name(0)
 
-    ModelsDirName = './models3/'
-    LogsDirName = './logs3/'
+    ModelsDirName = './artifacts/symmetric_enc_transformer_visnir_grid_3/models/'
+    LogsDirName = './artifacts/symmetric_enc_transformer_visnir_grid_3/logs/'
     Description = 'Symmetric CNN with Triplet loss, no HM'
-    BestFileName = 'visnir_best'
-    FileName = 'visnir_sym_triplet'
+    BestFileName = 'best_model'
+    FileName = 'model_epoch_'
     # TestDir = '/home/keller/Dropbox/multisensor/python/data/test/'
-    TestDir = 'F:\\multisensor\\test\\'
+    # TestDir = 'F:\\multisensor\\test\\'
     # TestDir = 'data\\Vis-Nir_grid\\test\\'
     # TrainFile = '/home/keller/Dropbox/multisensor/python/data/Vis-Nir_Train.mat'
-    TrainFile = 'f:\\multisensor\\train\\Vis-Nir_Train.hdf5'
+    # TrainFile = 'f:\\multisensor\\train\\Vis-Nir_Train.hdf5'
     # TrainFile = './data/Vis-Nir_grid/Vis-Nir_grid_Train.hdf5'
-    TestDecimation = 10
+    TrainFile, TestDir = load_dataset('visnir-grid')
+    TestDecimation = 1
     FPR95 = 0.8
+
+    assert_dir(ModelsDirName)
+    assert_dir(LogsDirName)
+
+    SelfSuperLoss = NTXentLoss(device=device, batch_size=0, temperature=0.5, use_cosine_similarity=True)
 
     UseMixedPrecision = False
     if UseMixedPrecision:
-        scaler = torch.cuda.amp.GradScaler(enabled=False)
+        scaler = torch.cuda.amp.GradScaler()
     else:
         scaler = MyGradScaler()
 
@@ -88,17 +111,19 @@ if __name__ == '__main__':
     np.random.seed(0)
     #torch.set_deterministic(True)
 
-    if False:
+    if True:
         GeneratorMode = 'Pairwise'
-        CnnMode = 'PairwiseSymmetric'
-        CnnMode = 'PairwiseSymmetricAttention'
+        #GeneratorMode = 'SelfSupervised'
+        CnnMode = 'Symmetric'
+        CnnMode = 'SymmetricAttention'
+        # CnnMode = 'SymmetricDecoder'
         NegativeMiningMode = 'Random'
         #NegativeMiningMode = 'Hardest'
         #NegativeMiningMode = 'HardPos'
         criterion = OnlineHardNegativeMiningTripletLoss(margin=1, Mode=NegativeMiningMode,device=device)
         #criterion         = OnlineHaOnlineHardNegativeMiningTripletLossrdNegativeMiningTripletLoss(margin=1, Mode='HardPos', MarginRatio=0.5)
         #criterion = OnlineHardNegativeMiningTripletLoss(margin=1, Mode='HardPos', MarginRatio=1.0/2, PosRatio=1. / 2)
-        Description = 'PairwiseSymmetric Hardest'
+        Description = 'Symmetric Hardest'
 
         InitializeOptimizer = True
         UseWarmUp           = True
@@ -106,7 +131,7 @@ if __name__ == '__main__':
         StartBestModel      = False
         UseBestScore        = False
 
-        LearningRate = 1e-1
+        LearningRate = 1e-1#0.1
 
         weight_decay = 0#1e-5
         DropoutP = 0.5
@@ -133,14 +158,15 @@ if __name__ == '__main__':
 
 
 
-    if True:
+    if False:
         GeneratorMode = 'Pairwise'
-        CnnMode = 'PairwiseAsymmetric'
-        CnnMode = 'PairwiseAsymmetricAttention'
+        CnnMode = 'Asymmetric'
+        CnnMode = 'AsymmetricAttention'
+        # CnnMode = 'AsymmetricDecoder'
 
         NegativeMiningMode = 'Random'
         #NegativeMiningMode = 'Hardest'
-        criterion = OnlineHardNegativeMiningTripletLoss(margin=1, Mode=NegativeMiningMode)
+        criterion = OnlineHardNegativeMiningTripletLoss(margin=1, Mode=NegativeMiningMode,device=device)
         # criterion = OnlineHardNegativeMiningTripletLoss(margin=1, Mode='HardPos', MarginRatio=1.0/2, PosRatio=1. / 2)
 
         InitializeOptimizer = True
@@ -153,7 +179,7 @@ if __name__ == '__main__':
         FreezeAsymmetricCnn  = False
 
         LearningRate = 1e-1
-        OuterBatchSize = 4 * 12
+        OuterBatchSize = 2 * 12
         InnerBatchSize = 2 * 12
 
 
@@ -168,7 +194,7 @@ if __name__ == '__main__':
         Augmentation["RandomCrop"] = {'Do': True, 'MinDx': 0, 'MaxDx': 0.2, 'MinDy': 0, 'MaxDy': 0.2}
 
         #AssymetricInitializationPhase = True
-        Description = 'PairwiseAsymmetric'
+        Description = 'Asymmetric'
 
 
 
@@ -241,7 +267,7 @@ if __name__ == '__main__':
     ValSetData = TrainingSetData[ValIdx, :, :, :].astype(np.float32)
     ValSetData[:, :, :, :, 0] -= ValSetData[:, :, :, :, 0].mean()
     ValSetData[:, :, :, :, 1] -= ValSetData[:, :, :, :, 1].mean()
-    ValSetData = torch.from_numpy(NormalizeImages(ValSetData));
+    ValSetData = torch.from_numpy(NormalizeImages(ValSetData))
 
 
 
@@ -313,7 +339,7 @@ if __name__ == '__main__':
         net.netAS2 = copy.deepcopy(net.module.netS)
 
 
-    if torch.cuda.device_count() > 1:
+    if NumGpus > 1:
         print("Let's use", torch.cuda.device_count(), "GPUs!")
         net = nn.DataParallel(net)
     net.to(device)
@@ -341,7 +367,8 @@ if __name__ == '__main__':
 
     if UseWarmUp:
         WarmUpEpochs = 4
-        scheduler_warmup = GradualWarmupSchedulerV2(optimizer, multiplier=1, total_epoch=WarmUpEpochs, after_scheduler= StepLR(optimizer, step_size=10, gamma=0.1))
+        scheduler_warmup = GradualWarmupSchedulerV2(optimizer, multiplier=1, total_epoch=WarmUpEpochs,
+                                                    after_scheduler= StepLR(optimizer, step_size=3, gamma=0.1))
     else:
         WarmUpEpochs = 0
 
@@ -359,7 +386,7 @@ if __name__ == '__main__':
         running_loss_neg = 0
         optimizer.zero_grad()
 
-        print('\n' + colored('Gain = ' + repr(net.module.Gain.item())[0:6], 'cyan', attrs=['reverse', 'blink']))
+        #print('\n' + colored('Gain = ' + repr(net.module.Gain.item())[0:6], 'cyan', attrs=['reverse', 'blink']))
         #print('\n' + colored('Gain1 = ' +repr(net.module.Gain1.item())[0:6], 'cyan', attrs=['reverse', 'blink']))
         #print('\n' + colored('Gain2 = ' +repr(net.module.Gain2.item())[0:6], 'cyan', attrs=['reverse', 'blink']))
 
@@ -387,18 +414,20 @@ if __name__ == '__main__':
             str += repr(param_group['lr']) + ' '
         print(colored(str, 'blue', attrs=['reverse', 'blink']))
 
-        print('FreezeSymmetricCnn  = ' + repr(FreezeSymmetricCnn) + '\nFreezeAsymmetricCnn = '+repr(FreezeAsymmetricCnn) + '\n')
-        print('NegativeMiningMode='+criterion.Mode)
+        print('FreezeSymmetricCnn = ' + repr(FreezeSymmetricCnn) + '\nFreezeAsymmetricCnn = '+repr(FreezeAsymmetricCnn) + '\n')
+        print('NegativeMiningMode = ' + criterion.Mode)
+        print('CnnMode = '+CnnMode + '\nGeneratorMode = ' + GeneratorMode)
 
-        Case1 = (criterion.Mode == 'Random') and (optimizer.param_groups[0]['lr'] <= (1e-4 + 1e-8)) and (epoch-StartEpoch>WarmUpEpochs)
-        Case2 = (CnnMode == 'Hybrid') and (criterion.Mode == 'Hardest') and (optimizer.param_groups[0]['lr'] <= (1e-4 +1e-8)) and (FreezeSymmetricCnn==True)
+        Case1 = (criterion.Mode == 'Random') and (optimizer.param_groups[0]['lr'] <= (LearningRate/1e3 + 1e-8)) \
+                and (epoch-StartEpoch>WarmUpEpochs)
+        Case2 = (CnnMode == 'Hybrid') and (criterion.Mode == 'Hardest') and (optimizer.param_groups[0]['lr'] <= (LearningRate/1e3 +1e-8)) \
+                and (FreezeSymmetricCnn==True)
         if Case1 or Case2:
             if Case1:
                 #print('Switching Random->Hardest')
                 print(colored('Switching Random->Hardest', 'green', attrs=['reverse', 'blink']))
                 criterion = OnlineHardNegativeMiningTripletLoss(margin=1, Mode = 'Hardest',device=device)
 
-                #if CnnMode == 'Hybrid':
                 LearningRate = 1e-1
                 optimizer = torch.optim.Adam(
                     [{'params': filter(lambda p: p.requires_grad == True, net.parameters()), 'lr': LearningRate,
@@ -406,6 +435,10 @@ if __name__ == '__main__':
                      {'params': filter(lambda p: p.requires_grad == False, net.parameters()), 'lr': 0,
                       'weight_decay': 0}],
                     lr=0, weight_decay=0.00)
+
+                #start with warmup
+                scheduler_warmup = GradualWarmupSchedulerV2(optimizer, multiplier=1, total_epoch=WarmUpEpochs)
+                StartEpoch = epoch
 
                 if type(scheduler).__name__ == 'StepLR':
                     scheduler =  StepLR(optimizer, step_size=10, gamma=0.1)
@@ -448,39 +481,45 @@ if __name__ == '__main__':
 
 
 
-            if (CnnMode == 'PairwiseAsymmetric') or (CnnMode == 'PairwiseSymmetric') or (CnnMode == 'PairwiseSymmetricAttention') or (CnnMode == 'PairwiseAsymmetricAttention'):
+            if (CnnMode == 'Asymmetric') or (CnnMode == 'Symmetric') or \
+                (CnnMode == 'SymmetricAttention') or (CnnMode == 'AsymmetricAttention') \
+                    or (CnnMode == 'SymmetricDecoder') or (CnnMode == 'AsymmetricDecoder'):
 
                 pos1, pos2 = pos1.to(device), pos2.to(device)
 
-                #with torch.cuda.amp.autocast():
-                Embed = net(pos1, pos2,DropoutP=DropoutP)
-                loss           = criterion(Embed['Emb1'], Embed['Emb2']) + criterion(Embed['Emb2'], Embed['Emb1'])
+                with torch.cuda.amp.autocast(enabled=UseMixedPrecision):
+                    Embed = net(pos1, pos2,DropoutP=DropoutP)
+
+                    if GeneratorMode == 'SelfSupervised':
+                        loss = SelfSuperLoss(Embed['Emb1'],Embed['Emb2'])
+                    else:
+                        loss = criterion(Embed['Emb1'], Embed['Emb2']) + criterion(Embed['Emb2'], Embed['Emb1'])
 
 
             if (CnnMode == 'Hybrid') or (CnnMode == 'AttenHybrid'):
                 pos1, pos2 = pos1.to(device), pos2.to(device)
 
                 # GPUtil.showUtilization()
-                #with torch.cuda.amp.autocast():
-                Embed = net(pos1, pos2,DropoutP=DropoutP)
-                loss = criterion(Embed['Hybrid1'], Embed['Hybrid2']) + criterion(Embed['Hybrid2'],Embed['Hybrid1'])
-                loss += criterion(Embed['EmbSym1'], Embed['EmbSym2']) + criterion(Embed['EmbSym2'], Embed['EmbSym1'])
+                with torch.cuda.amp.autocast(enabled=UseMixedPrecision):
+                    Embed = net(pos1, pos2,DropoutP=DropoutP)
+                    loss = criterion(Embed['Hybrid1'], Embed['Hybrid2']) + criterion(Embed['Hybrid2'],Embed['Hybrid1'])
+                    loss += criterion(Embed['EmbSym1'], Embed['EmbSym2']) + criterion(Embed['EmbSym2'], Embed['EmbSym1'])
                 #loss +=criterion(Embed['EmbAsym1'], Embed['EmbAsym2'])+criterion(Embed['EmbAsym2'], Embed['EmbAsym1'])
 
 
 
             # backward + optimize
-            loss.backward()
-            #scaler.scale(loss).backward()
+            #loss.backward()
+            scaler.scale(loss).backward()
 
             clipping_value = 1
             #torch.nn.utils.clip_grad_norm_(net.parameters(), clipping_value)
 
-            optimizer.step()  # Now we can do an optimizer step
-            #scaler.step(optimizer)
+            #optimizer.step()  # Now we can do an optimizer step
+            scaler.step(optimizer)
 
             # Updates the scale for next iteration
-            #scaler.update()
+            scaler.update()
 
 
 
@@ -493,7 +532,7 @@ if __name__ == '__main__':
 
 
 
-            PrintStep = 1000
+            PrintStep = 2000
             if (((i % PrintStep == 0) or (i * InnerBatchSize >= len(Training_DataLoader) - 1)) and (i > 0)) or TestMode:
 
                 if i > 0:
@@ -505,31 +544,18 @@ if __name__ == '__main__':
                 # val accuracy
                 net.eval()
                 StepSize = 800
-                EmbVal1 = EvaluateNet(net.module.GetChannelCnn(0, CnnMode), ValSetData[:, :, :, :, 0], device,StepSize)
-                EmbVal2 = EvaluateNet(net.module.GetChannelCnn(1, CnnMode), ValSetData[:, :, :, :, 1], device,StepSize)
-                Dist = np.power(EmbVal1 - EmbVal2, 2).sum(1)
+                Emb = EvaluateDualNets(net, ValSetData[:, :, :, :, 0], ValSetData[:, :, :, :, 1],CnnMode,device, StepSize)
+
+                Dist = np.power(Emb['Emb1'] - Emb['Emb2'], 2).sum(1)
                 ValError = FPR95Accuracy(Dist, ValSetLabels) * 100
 
-                del EmbVal1, EmbVal2
+                del Emb
 
                 # estimate fpr95 threshold
                 PosValIdx = np.squeeze(np.asarray(np.where(ValSetLabels == 1)))
                 CurrentFPR95 = np.sort(Dist[PosValIdx])[int(0.95 * PosValIdx.shape[0])]
                 if i > 0:
-                    print('FPR95: ' + repr(CurrentFPR95)[0:4] + ' Loss= ' + repr(running_loss)[0:6])
-
-                if (net.module.Mode == 'Hybrid1') or (net.module.Mode == 'Hybrid2'):
-                    net.module.Mode = 'Hybrid'
-
-                if (net.module.Mode == 'PairwiseSymmetricAttention1') or (net.module.Mode == 'PairwiseSymmetricAttention2'):
-                    net.module.Mode = 'PairwiseSymmetricAttention'
-
-                if (net.module.Mode == 'PairwiseAsymmetricAttention1') or (net.module.Mode == 'PairwiseAsymmetricAttention2'):
-                    net.module.Mode = 'PairwiseAsymmetricAttention'
-
-                if (net.module.Mode == 'AttenHybrid1') or (net.module.Mode == 'AttenHybrid2'):
-                    net.module.Mode = 'AttenHybrid'
-
+                    print('FPR95: ' + format(CurrentFPR95,".2e")  + ' Loss= ' + repr(running_loss)[0:6])
 
                 print('FPR95 changed: ' + repr(FPR95)[0:5])
 
@@ -545,33 +571,20 @@ if __name__ == '__main__':
                 NoSamples = 0
                 TotalTestError = 0
                 for DataName in TestData:
-                    EmbTest1 = EvaluateNet(net.module.GetChannelCnn(0, CnnMode),
-                                           TestData[DataName]['Data'][0::TestDecimation1, :, :, :, 0], device,
-                                           StepSize)
-                    EmbTest2 = EvaluateNet(net.module.GetChannelCnn(1, CnnMode),
-                                           TestData[DataName]['Data'][0::TestDecimation1, :, :, :, 1], device,
+                    EmbTest = EvaluateDualNets(net, TestData[DataName]['Data'][0::TestDecimation1, :, :, :, 0],
+                                               TestData[DataName]['Data'][0::TestDecimation1, :, :, :, 1], CnnMode, device,
                                            StepSize)
 
-                    Dist = np.power(EmbTest1 - EmbTest2, 2).sum(1)
+                    Dist = np.power(EmbTest['Emb1'] - EmbTest['Emb2'], 2).sum(1)
                     TestData[DataName]['TestError'] = FPR95Accuracy(Dist, TestData[DataName]['Labels'][
                                                                           0::TestDecimation1]) * 100
                     TotalTestError += TestData[DataName]['TestError'] * TestData[DataName]['Data'].shape[0]
                     NoSamples += TestData[DataName]['Data'].shape[0]
                 TotalTestError /= NoSamples
 
-                del EmbTest1, EmbTest2
+                del EmbTest
 
-                if (net.module.Mode == 'Hybrid1') or (net.module.Mode == 'Hybrid2'):
-                    net.module.Mode = 'Hybrid'
 
-                if (net.module.Mode == 'PairwiseSymmetricAttention1') or (net.module.Mode == 'PairwiseSymmetricAttention2'):
-                    net.module.Mode = 'PairwiseSymmetricAttention'
-
-                if (net.module.Mode == 'PairwiseAsymmetricAttention1') or (net.module.Mode == 'PairwiseAsymmetricAttention2'):
-                    net.module.Mode = 'PairwiseAsymmetricAttention'
-
-                if (net.module.Mode == 'AttenHybrid1') or (net.module.Mode == 'AttenHybrid2'):
-                    net.module.Mode = 'AttenHybrid'
 
 
                 state = {'epoch': epoch,
@@ -593,15 +606,16 @@ if __name__ == '__main__':
                          'Loss': criterion.Mode,
                          'FPR95': FPR95}
 
-                #if (TotalTestError < LowestError):
-                if (ValError < LowestError):
-                    #LowestError = TotalTestError
-                    LowestError = ValError
+                #if (ValError < LowestError):
+                if (TotalTestError < LowestError):
+                    LowestError = TotalTestError
+                    # LowestError = ValError
 
                     print(colored('Best error found and saved: ' + repr(TotalTestError)[0:5], 'red', attrs=['reverse', 'blink']))
                     #print('Best error found and saved: ' + repr(LowestError)[0:5])
                     filepath = ModelsDirName + BestFileName + '.pth'
                     torch.save(state, filepath)
+                    save_best_model_stats(ModelsDirName, epoch, TotalTestError, TestData)
 
 
                 str = '[%d, %5d] loss: %.3f' % (epoch, i, 100 * running_loss) + ' Val Error: ' + repr(ValError)[0:6]
@@ -612,11 +626,12 @@ if __name__ == '__main__':
                 str += ' FPR95 = ' + repr(FPR95)[0:6] + ' Mean: ' + repr(TotalTestError)[0:6]
                 print(str)
 
-                if False:
+                if True:
                     writer.add_scalar('Val Error', ValError, epoch * len(Training_DataLoader) + i)
                     writer.add_scalar('Test Error', TotalTestError, epoch * len(Training_DataLoader) + i)
                     writer.add_scalar('Loss', 100 * running_loss, epoch * len(Training_DataLoader) + i)
                     writer.add_scalar('FPR95', FPR95, epoch * len(Training_DataLoader) + i)
+                    writer.add_scalar('Learning Rate', optimizer.param_groups[0]['lr'], epoch * len(Training_DataLoader) + i)
                     writer.add_text('Text', str)
                     writer.close()
 
