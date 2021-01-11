@@ -47,6 +47,15 @@ def load_dataset(ds_name):
     elif ds_name == 'visnir-grid':
         test_dir = 'D:\\multisensor\\datasets\\Vis-Nir_grid\\test\\'
         train_file = 'D:\\multisensor\\datasets\\Vis-Nir_grid\\train.hdf5'
+    elif ds_name == 'brown-liberty':
+        test_dir = 'D:\\multisensor\\datasets\\brown\\patchdata\\test_yos_not\\'
+        train_file = 'D:\\multisensor\\datasets\\brown\\patchdata\\liberty_full_for_multisensor.hdf5'
+    elif ds_name == 'brown-notredame':
+        test_dir = 'D:\\multisensor\\datasets\\brown\\patchdata\\test_lib_yos\\'
+        train_file = 'D:\\multisensor\\datasets\\brown\\patchdata\\notredame_full_for_multisensor.hdf5'
+    elif ds_name == 'brown-yosemite':
+        test_dir = 'D:\\multisensor\\datasets\\brown\\patchdata\\test_lib_not\\'
+        train_file = 'D:\\multisensor\\datasets\\brown\\patchdata\\yosemite_full_for_multisensor.hdf5'
     return train_file, test_dir
 
 if __name__ == '__main__':
@@ -60,8 +69,8 @@ if __name__ == '__main__':
     print(device)
     name = torch.cuda.get_device_name(0)
 
-    ModelsDirName = './artifacts/symmetric_enc_transformer_visnir_grid_3/models/'
-    LogsDirName = './artifacts/symmetric_enc_transformer_visnir_grid_3/logs/'
+    ModelsDirName = './artifacts/symmetric_enc_transformer_brown_yosemite_1/models/'
+    LogsDirName = './artifacts/symmetric_enc_transformer_brown_yosemite_1/logs/'
     Description = 'Symmetric CNN with Triplet loss, no HM'
     BestFileName = 'best_model'
     FileName = 'model_epoch_'
@@ -71,7 +80,7 @@ if __name__ == '__main__':
     # TrainFile = '/home/keller/Dropbox/multisensor/python/data/Vis-Nir_Train.mat'
     # TrainFile = 'f:\\multisensor\\train\\Vis-Nir_Train.hdf5'
     # TrainFile = './data/Vis-Nir_grid/Vis-Nir_grid_Train.hdf5'
-    TrainFile, TestDir = load_dataset('visnir-grid')
+    TrainFile, TestDir = load_dataset('brown-yosemite')
     TestDecimation = 1
     FPR95 = 0.8
 
@@ -140,9 +149,9 @@ if __name__ == '__main__':
         InnerBatchSize = 2*12
         Augmentation["Test"] = {'Do': False}
         Augmentation["HorizontalFlip"] = True
-        Augmentation["VerticalFlip"] = True
-        Augmentation["Rotate90"] = True
-        Augmentation["RandomCrop"] = {'Do': True, 'MinDx': 0, 'MaxDx': 0.2, 'MinDy': 0, 'MaxDy': 0.2}
+        # Augmentation["Rotate90"] = True
+        # Augmentation["VerticalFlip"] = True
+        # Augmentation["RandomCrop"] = {'Do': True, 'MinDx': 0, 'MaxDx': 0.2, 'MinDy': 0, 'MaxDy': 0.2}
 
 
         FreezeSymmetricCnn  = False
@@ -281,7 +290,7 @@ if __name__ == '__main__':
     Training_Dataset = DatasetPairwiseTriplets(TrainingSetData, TrainingSetLabels, InnerBatchSize, Augmentation, GeneratorMode)
     # Training_DataLoader = data.DataLoader(Training_Dataset, batch_size=OuterBatchSize, shuffle=True,num_workers=8,pin_memory=True)
     Training_DataLoader = MultiEpochsDataLoader(Training_Dataset, batch_size=OuterBatchSize, shuffle=True,
-                                                num_workers=8, pin_memory=True)
+                                                num_workers=0, pin_memory=True)
 
 
 
@@ -542,20 +551,23 @@ if __name__ == '__main__':
 
 
                 # val accuracy
-                net.eval()
                 StepSize = 800
-                Emb = EvaluateDualNets(net, ValSetData[:, :, :, :, 0], ValSetData[:, :, :, :, 1],CnnMode,device, StepSize)
+                if len(ValSetData) > 0:
+                    net.eval()
+                    Emb = EvaluateDualNets(net, ValSetData[:, :, :, :, 0], ValSetData[:, :, :, :, 1],CnnMode,device, StepSize)
 
-                Dist = np.power(Emb['Emb1'] - Emb['Emb2'], 2).sum(1)
-                ValError = FPR95Accuracy(Dist, ValSetLabels) * 100
+                    Dist = np.power(Emb['Emb1'] - Emb['Emb2'], 2).sum(1)
+                    ValError = FPR95Accuracy(Dist, ValSetLabels) * 100
+                    del Emb
+                    # estimate fpr95 threshold
+                    PosValIdx = np.squeeze(np.asarray(np.where(ValSetLabels == 1)))
+                    CurrentFPR95 = np.sort(Dist[PosValIdx])[int(0.95 * PosValIdx.shape[0])]
+                    if i > 0:
+                        print('FPR95: ' + format(CurrentFPR95, ".2e") + ' Loss= ' + repr(running_loss)[0:6])
+                else:
+                    ValError = 0
 
-                del Emb
 
-                # estimate fpr95 threshold
-                PosValIdx = np.squeeze(np.asarray(np.where(ValSetLabels == 1)))
-                CurrentFPR95 = np.sort(Dist[PosValIdx])[int(0.95 * PosValIdx.shape[0])]
-                if i > 0:
-                    print('FPR95: ' + format(CurrentFPR95,".2e")  + ' Loss= ' + repr(running_loss)[0:6])
 
                 print('FPR95 changed: ' + repr(FPR95)[0:5])
 
