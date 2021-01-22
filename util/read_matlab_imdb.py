@@ -8,7 +8,7 @@ def read_matlab_imdb(fname):
     VarNames = list(f.keys())
 
     if len(VarNames) == 1:
-        imdb = f[VarNames[0]];
+        imdb = f[VarNames[0]]
         Result = np.squeeze(np.array(imdb[()]))
     else:
         i=0

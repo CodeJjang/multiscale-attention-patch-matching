@@ -13,11 +13,15 @@ import torch.optim as optim
 import torch.nn as nn
 from tqdm import tqdm
 import GPUtil
+import json
 import math
 from pathlib import Path
 
 # my classes
-from network.my_classes import imshow, ShowRowImages, ShowTwoRowImages,EvaluateDualNets
+from hpatches.utils.hpatch import hpatch_descr, hpatch_sequence
+from hpatches.utils.results import results_verification, results_matching, results_retrieval
+from hpatches.utils.tasks import eval_verification, eval_matching, eval_retrieval
+from network.my_classes import imshow, ShowRowImages, ShowTwoRowImages, EvaluateDualNets, EvaluateSingleNet
 from network.my_classes import FPR95Accuracy,SingleNet, MetricLearningCnn, EvaluateNet,EvaluateDualNets
 from network.generator import DatasetPairwiseTriplets,NormalizeImages
 from network.losses import ContrastiveLoss, TripletLoss, OnlineTripletLoss, OnlineHardNegativeMiningTripletLoss
@@ -27,14 +31,15 @@ from util.warmup_scheduler import GradualWarmupSchedulerV2
 from util.read_matlab_imdb import read_matlab_imdb
 from util.utils import LoadModel,MultiEpochsDataLoader,MyGradScaler, save_best_model_stats
 from network.nt_xent import NTXentLoss
-
+from hpatches.utils.load_dataset import load_dataset as load_hpatches_dataset
+import h5py
 import warnings
 warnings.filterwarnings("ignore", message="UserWarning: albumentations.augmentations.transforms.RandomResizedCrop")
 
 def assert_dir(dir_path):
     Path(dir_path).mkdir(parents=True, exist_ok=True)
 
-def load_dataset(ds_name):
+def load_datasets_paths(ds_name):
     if ds_name == 'VisNir':
         test_dir = 'F:\\multisensor\\test\\'
         train_file = 'F:\\multisensor\\train\\Vis-Nir_Train.hdf5'
@@ -56,7 +61,87 @@ def load_dataset(ds_name):
     elif ds_name == 'brown-yosemite':
         test_dir = 'D:\\multisensor\\datasets\\brown\\patchdata\\test_lib_not\\'
         train_file = 'D:\\multisensor\\datasets\\brown\\patchdata\\yosemite_full_for_multisensor.hdf5'
+    elif ds_name == 'hpatches-liberty':
+        test_dir = 'D:\\multisensor\\datasets\\hpatches-benchmark\\data\\hpatches-release-multisensor\\data_v2.hdf5'
+        train_file = 'D:\\multisensor\\datasets\\brown\\patchdata\\liberty_full_for_multisensor.hdf5'
+    elif ds_name == 'hpatches-all-brown':
+        test_dir = 'D:\\multisensor\\datasets\\hpatches-benchmark\\data\\hpatches-release-multisensor\\data_v2.hdf5'
+        train_file = 'D:\\multisensor\\datasets\\brown\\patchdata\\full_for_multisensor.hdf5'
     return train_file, test_dir
+
+
+def load_test_datasets(TestDir):
+    # Load all TEST datasets
+    FileList = glob.glob(TestDir + "*.hdf5")
+    TestData = dict()
+    for File in FileList:
+        path, DatasetName = os.path.split(File)
+        DatasetName = os.path.splitext(DatasetName)[0]
+
+        Data = read_matlab_imdb(File)
+
+        x = Data['Data'].astype(np.float32)
+        TestLabels = torch.from_numpy(np.squeeze(Data['Labels']))
+        del Data
+
+        x[:, :, :, :, 0] -= x[:, :, :, :, 0].mean()
+        x[:, :, :, :, 1] -= x[:, :, :, :, 1].mean()
+
+        x = NormalizeImages(x)
+        x = torch.from_numpy(x)
+
+        # TestLabels = torch.from_numpy(2 - Data['testLabels'])
+
+        TestData[DatasetName] = dict()
+        TestData[DatasetName]['Data'] = x
+        TestData[DatasetName]['Labels'] = TestLabels
+        del x
+    return TestData
+
+
+def evaluate_test(TestData, TestDecimation1, CnnMode, device, StepSize):
+    NoSamples = 0
+    TotalTestError = 0
+    for DataName in TestData:
+        EmbTest = EvaluateDualNets(net, TestData[DataName]['Data'][0::TestDecimation1, :, :, :, 0],
+                                   TestData[DataName]['Data'][0::TestDecimation1, :, :, :, 1], CnnMode, device,
+                                   StepSize)
+
+        Dist = np.power(EmbTest['Emb1'] - EmbTest['Emb2'], 2).sum(1)
+        TestData[DataName]['TestError'] = FPR95Accuracy(Dist, TestData[DataName]['Labels'][
+                                                              0::TestDecimation1]) * 100
+        TotalTestError += TestData[DataName]['TestError'] * TestData[DataName]['Data'].shape[0]
+        NoSamples += TestData[DataName]['Data'].shape[0]
+    TotalTestError /= NoSamples
+
+    del EmbTest
+    return TotalTestError
+
+
+def evaluate_hpatch(TestData, TestDecimation1, CnnMode, device, StepSize, splits, taskdir, extra_data):
+    descriptors = {}
+    for seq_name, seq_data in TestData.items():
+        local_descr_map = {}
+        for t in hpatch_descr.itr:
+            EmbTest = EvaluateSingleNet(net, getattr(seq_data, t), CnnMode, device, StepSize)['Emb1']
+            local_descr_map[t] = EmbTest
+        descriptors[seq_name] = hpatch_descr(descr_map=local_descr_map)
+    descriptors['dim'] = descriptors[list(descriptors.keys())[0]].dim
+    descriptors['distance'] = 'L2'
+    eval = eval_verification(descriptors, splits['full'], taskdir)
+    verification_map, verification_data = results_verification(CnnMode, splits['full'], eval)
+    print('Verification mAP:', verification_map * 100)
+    eval = eval_matching(descriptors, splits['full'])
+    matching_map, matching_data = results_matching(CnnMode, splits['full'], eval)
+    print('Matching mAP:', matching_map * 100)
+    eval = eval_retrieval(descriptors, splits['full'], taskdir)
+    retrieval_map, retrieval_data = results_retrieval(CnnMode, splits['full'], eval)
+    print('Retrieval mAP:', retrieval_map * 100)
+    extra_data['verification'] = {'mAP': verification_map, 'data': verification_data}
+    extra_data['matching'] = {'mAP': matching_map, 'data': matching_data}
+    extra_data['retrieval'] = {'mAP': retrieval_map, 'data': retrieval_data}
+    return 1 - verification_map, 1 - matching_map, 1 - retrieval_map
+
 
 if __name__ == '__main__':
     np.random.seed(0)
@@ -69,8 +154,8 @@ if __name__ == '__main__':
     print(device)
     name = torch.cuda.get_device_name(0)
 
-    ModelsDirName = './artifacts/symmetric_enc_transformer_brown_yosemite_1/models/'
-    LogsDirName = './artifacts/symmetric_enc_transformer_brown_yosemite_1/logs/'
+    ModelsDirName = './artifacts/symmetric_enc_transformer_6/models/'
+    LogsDirName = './artifacts/symmetric_enc_transformer_6/logs/'
     Description = 'Symmetric CNN with Triplet loss, no HM'
     BestFileName = 'best_model'
     FileName = 'model_epoch_'
@@ -80,7 +165,8 @@ if __name__ == '__main__':
     # TrainFile = '/home/keller/Dropbox/multisensor/python/data/Vis-Nir_Train.mat'
     # TrainFile = 'f:\\multisensor\\train\\Vis-Nir_Train.hdf5'
     # TrainFile = './data/Vis-Nir_grid/Vis-Nir_grid_Train.hdf5'
-    TrainFile, TestDir = load_dataset('brown-yosemite')
+    ds_name = 'VisNir'
+    TrainFile, TestDir = load_datasets_paths(ds_name)
     TestDecimation = 1
     FPR95 = 0.8
 
@@ -113,7 +199,7 @@ if __name__ == '__main__':
     AssymetricInitializationPhase = False
 
     TestMode = False
-
+    use_validation = True
     FreezeSymmetricBlock = False
 
     torch.manual_seed(0)
@@ -149,7 +235,7 @@ if __name__ == '__main__':
         InnerBatchSize = 2*12
         Augmentation["Test"] = {'Do': False}
         Augmentation["HorizontalFlip"] = True
-        # Augmentation["Rotate90"] = True
+        Augmentation["Rotate90"] = True
         # Augmentation["VerticalFlip"] = True
         # Augmentation["RandomCrop"] = {'Do': True, 'MinDx': 0, 'MaxDx': 0.2, 'MinDy': 0, 'MaxDy': 0.2}
 
@@ -263,63 +349,53 @@ if __name__ == '__main__':
     Data = read_matlab_imdb(TrainFile)
     TrainingSetData = Data['Data']
     TrainingSetLabels = np.squeeze(Data['Labels'])
-    TrainingSetSet = np.squeeze(Data['Set'])
+    if use_validation:
+        TrainingSetSet = np.squeeze(Data['Set'])
     del Data
 
 
-    TrainIdx = np.squeeze(np.asarray(np.where(TrainingSetSet == 1)))
-    ValIdx = np.squeeze(np.asarray(np.where(TrainingSetSet == 3)))
+    ValSetData = []
+    if use_validation:
+        TrainIdx = np.squeeze(np.asarray(np.where(TrainingSetSet == 1)))
+        ValIdx = np.squeeze(np.asarray(np.where(TrainingSetSet == 3)))
 
-    # VALIDATION data
-    ValSetLabels = torch.from_numpy(TrainingSetLabels[ValIdx])
+        # VALIDATION data
+        ValSetLabels = torch.from_numpy(TrainingSetLabels[ValIdx])
 
-    ValSetData = TrainingSetData[ValIdx, :, :, :].astype(np.float32)
-    ValSetData[:, :, :, :, 0] -= ValSetData[:, :, :, :, 0].mean()
-    ValSetData[:, :, :, :, 1] -= ValSetData[:, :, :, :, 1].mean()
-    ValSetData = torch.from_numpy(NormalizeImages(ValSetData))
+        ValSetData = TrainingSetData[ValIdx, :, :, :].astype(np.float32)
+        ValSetData[:, :, :, :, 0] -= ValSetData[:, :, :, :, 0].mean()
+        ValSetData[:, :, :, :, 1] -= ValSetData[:, :, :, :, 1].mean()
+        ValSetData = torch.from_numpy(NormalizeImages(ValSetData))
 
-
-
-
-
-    # TRAINING data
-    TrainingSetData = np.squeeze(TrainingSetData[TrainIdx,])
-    TrainingSetLabels = TrainingSetLabels[TrainIdx]
+        # TRAINING data
+        TrainingSetData = np.squeeze(TrainingSetData[TrainIdx,])
+        TrainingSetLabels = TrainingSetLabels[TrainIdx]
 
     # define generators
     Training_Dataset = DatasetPairwiseTriplets(TrainingSetData, TrainingSetLabels, InnerBatchSize, Augmentation, GeneratorMode)
     # Training_DataLoader = data.DataLoader(Training_Dataset, batch_size=OuterBatchSize, shuffle=True,num_workers=8,pin_memory=True)
     Training_DataLoader = MultiEpochsDataLoader(Training_Dataset, batch_size=OuterBatchSize, shuffle=True,
-                                                num_workers=0, pin_memory=True)
+                                                num_workers=8, pin_memory=True)
 
 
 
+    if 'hpatches' not in ds_name:
+        TestData = load_test_datasets(TestDir)
+    else:
+        # TestData = load_hpatches_dataset(TestDir)
+        print('Loading hpatchs...')
+        TestData = {}
+        with h5py.File(TestDir, 'r') as handle:
+            for seq_name in handle.keys():
+                hpatch = hpatch_sequence()
+                seq_data = handle.get(seq_name)
+                for t in seq_data.keys():
+                    setattr(hpatch, t, torch.from_numpy(np.array(seq_data.get(t), np.float32)))
+                TestData[seq_name] = hpatch
+        hpatch_taskdir = "D:\\multisensor\\datasets\\hpatches-benchmark\\tasks"
+        with open(os.path.join(hpatch_taskdir, "splits", "splits.json")) as f:
+            hpatch_splits = json.load(f)
 
-    # Load all TEST datasets
-    FileList = glob.glob(TestDir + "*.hdf5")
-    TestData = dict()
-    for File in FileList:
-        path, DatasetName = os.path.split(File)
-        DatasetName = os.path.splitext(DatasetName)[0]
-
-        Data = read_matlab_imdb(File)
-
-        x = Data['Data'].astype(np.float32)
-        TestLabels = torch.from_numpy(np.squeeze(Data['Labels']))
-        del Data
-
-        x[:, :, :, :, 0] -= x[:, :, :, :, 0].mean()
-        x[:, :, :, :, 1] -= x[:, :, :, :, 1].mean()
-
-        x = NormalizeImages(x)
-        x = torch.from_numpy(x)
-
-        # TestLabels = torch.from_numpy(2 - Data['testLabels'])
-
-        TestData[DatasetName] = dict()
-        TestData[DatasetName]['Data'] = x
-        TestData[DatasetName]['Labels'] = TestLabels
-        del x
     # ------------------------------------------------------------------------------------------
 
 
@@ -332,8 +408,8 @@ if __name__ == '__main__':
 
     StartEpoch = 0
 
-    net,optimizer,LowestError,StartEpoch,scheduler,LodedNegativeMiningMode =  LoadModel(net, StartBestModel, ModelsDirName, BestFileName, UseBestScore, device)
-    print('LodedNegativeMiningMode: ' + LodedNegativeMiningMode)
+    net,optimizer,LowestError,StartEpoch,scheduler,LodedNegativeMiningMode = LoadModel(net, StartBestModel, ModelsDirName, BestFileName, UseBestScore, device)
+    print('LodaedNegativeMiningMode: ' + LodedNegativeMiningMode)
 
     # -------------------------------------  freeze layers --------------------------------------
     net.FreezeSymmetricCnn(FreezeSymmetricCnn)
@@ -375,7 +451,8 @@ if __name__ == '__main__':
 
 
     if UseWarmUp:
-        WarmUpEpochs = 4
+        # WarmUpEpochs = 4
+        WarmUpEpochs = 8
         scheduler_warmup = GradualWarmupSchedulerV2(optimizer, multiplier=1, total_epoch=WarmUpEpochs,
                                                     after_scheduler= StepLR(optimizer, step_size=3, gamma=0.1))
     else:
@@ -541,7 +618,7 @@ if __name__ == '__main__':
 
 
 
-            PrintStep = 2000
+            PrintStep = 1000
             if (((i % PrintStep == 0) or (i * InnerBatchSize >= len(Training_DataLoader) - 1)) and (i > 0)) or TestMode:
 
                 if i > 0:
@@ -577,27 +654,15 @@ if __name__ == '__main__':
                 if i >= len(Training_DataLoader):
                     TestDecimation1 = 1
                 else:
-                    TestDecimation1 = TestDecimation;
+                    TestDecimation1 = TestDecimation
 
                 # test accuracy
-                NoSamples = 0
-                TotalTestError = 0
-                for DataName in TestData:
-                    EmbTest = EvaluateDualNets(net, TestData[DataName]['Data'][0::TestDecimation1, :, :, :, 0],
-                                               TestData[DataName]['Data'][0::TestDecimation1, :, :, :, 1], CnnMode, device,
-                                           StepSize)
-
-                    Dist = np.power(EmbTest['Emb1'] - EmbTest['Emb2'], 2).sum(1)
-                    TestData[DataName]['TestError'] = FPR95Accuracy(Dist, TestData[DataName]['Labels'][
-                                                                          0::TestDecimation1]) * 100
-                    TotalTestError += TestData[DataName]['TestError'] * TestData[DataName]['Data'].shape[0]
-                    NoSamples += TestData[DataName]['Data'].shape[0]
-                TotalTestError /= NoSamples
-
-                del EmbTest
-
-
-
+                extra_data = {}
+                if 'hpatch' not in ds_name:
+                    TotalTestError = evaluate_test(TestData, TestDecimation1, CnnMode, device, StepSize)
+                else:
+                    verification_err, matching_err, retrieval_err = evaluate_hpatch(TestData, TestDecimation1, CnnMode, device, StepSize, hpatch_splits, hpatch_taskdir, extra_data)
+                    TotalTestError = verification_err
 
                 state = {'epoch': epoch,
                          'state_dict': net.module.state_dict(),
@@ -619,7 +684,7 @@ if __name__ == '__main__':
                          'FPR95': FPR95}
 
                 #if (ValError < LowestError):
-                if (TotalTestError < LowestError):
+                if TotalTestError < LowestError:
                     LowestError = TotalTestError
                     # LowestError = ValError
 
@@ -627,7 +692,7 @@ if __name__ == '__main__':
                     #print('Best error found and saved: ' + repr(LowestError)[0:5])
                     filepath = ModelsDirName + BestFileName + '.pth'
                     torch.save(state, filepath)
-                    save_best_model_stats(ModelsDirName, epoch, TotalTestError, TestData)
+                    save_best_model_stats(ModelsDirName, epoch, TotalTestError, TestData, extra_data)
 
 
                 str = '[%d, %5d] loss: %.3f' % (epoch, i, 100 * running_loss) + ' Val Error: ' + repr(ValError)[0:6]
@@ -640,7 +705,14 @@ if __name__ == '__main__':
 
                 if True:
                     writer.add_scalar('Val Error', ValError, epoch * len(Training_DataLoader) + i)
-                    writer.add_scalar('Test Error', TotalTestError, epoch * len(Training_DataLoader) + i)
+                    if 'hpatch' not in ds_name:
+                        writer.add_scalar('Test Error', TotalTestError, epoch * len(Training_DataLoader) + i)
+                    else:
+                        writer.add_scalar('Test Verification Error', verification_err, epoch * len(Training_DataLoader) + i)
+                        writer.add_scalar('Test Matching Error', matching_err,
+                                          epoch * len(Training_DataLoader) + i)
+                        writer.add_scalar('Test Retrieval Error', retrieval_err,
+                                          epoch * len(Training_DataLoader) + i)
                     writer.add_scalar('Loss', 100 * running_loss, epoch * len(Training_DataLoader) + i)
                     writer.add_scalar('FPR95', FPR95, epoch * len(Training_DataLoader) + i)
                     writer.add_scalar('Learning Rate', optimizer.param_groups[0]['lr'], epoch * len(Training_DataLoader) + i)

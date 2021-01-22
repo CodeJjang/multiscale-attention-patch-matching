@@ -139,7 +139,28 @@ def EvaluateDualNets(net,Data1, Data2,CnnMode,device,StepSize):
     return Emb
 
 
+def EvaluateSingleNet(net,Data1,CnnMode,device,StepSize):
+    with torch.no_grad():
 
+        for k in range(0, Data1.shape[0], StepSize):
+
+            # ShowTwoRowImages(x[0:3, :, :, 0], x[0:3, :, :, 1])
+            a = Data1[k:(k + StepSize), :, :, :]  # - my_training_Dataset.VisAvg
+
+            # ShowTwoRowImages(a[0:10,0,:,:], b[0:10,0,:,:])
+            a = a.to(device)
+            x = net(a, None, CnnMode)
+
+            if k == 0:
+                keys = list(x.keys())
+                Emb = dict()
+                for key in keys:
+                    Emb[key] = np.zeros((Data1.shape[0], x[key].shape[1]), dtype=np.float32)
+
+            for key in keys:
+                Emb[key][k:(k + StepSize)] = x[key].cpu()
+
+    return Emb
 
 
 
@@ -414,7 +435,7 @@ class MetricLearningCnn(nn.Module):
 
 
     #output CNN
-    def forward(self,S1A, S1B=0,Mode = -1,DropoutP = 0.0):
+    def forward(self,S1A, S1B = None,Mode = -1,DropoutP = 0.0):
 
         if (S1A.nelement() == 0):
             return 0
@@ -473,12 +494,10 @@ class MetricLearningCnn(nn.Module):
 
         if Mode == 'SymmetricAttention':
 
-                output1 = self.AttenS(S1A, DropoutP=DropoutP)
-                output2 = self.AttenS(S1B, DropoutP=DropoutP)
-
                 Result = dict()
-                Result['Emb1'] = output1
-                Result['Emb2'] = output2
+                Result['Emb1'] = self.AttenS(S1A, DropoutP=DropoutP)
+                if S1B is not None:
+                    Result['Emb2'] = self.AttenS(S1B, DropoutP=DropoutP)
 
                 return Result
 

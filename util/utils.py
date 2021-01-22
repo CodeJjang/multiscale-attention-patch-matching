@@ -7,12 +7,13 @@ from torch.optim.lr_scheduler import ReduceLROnPlateau
 
 
 
-def LoadModel(net,StartBestModel,ModelsDirName,BestFileName,UseBestScore,device):
+def LoadModel(net,StartBestModel,ModelsDirName,BestFileName,UseBestScore,device, load_epoch=None):
 
     scheduler = None
     optimizer = None
 
     LowestError = 1e5
+
     NegativeMiningMode = 'Random'
 
     if StartBestModel:
@@ -23,9 +24,13 @@ def LoadModel(net,StartBestModel,ModelsDirName,BestFileName,UseBestScore,device)
     if FileList:
         FileList.sort(key=os.path.getmtime)
 
-        print(FileList[-1] + ' loded')
-
-        checkpoint = torch.load(FileList[-1])
+        if load_epoch is not None:
+            model_path = ModelsDirName + 'model_epoch_%s.pth' % load_epoch
+            print('%s loaded' % model_path)
+            checkpoint = torch.load(model_path)
+        else:
+            print(FileList[-1] + ' loaded')
+            checkpoint = torch.load(FileList[-1])
 
         if ('LowestError' in checkpoint.keys()) and UseBestScore:
             LowestError = checkpoint['LowestError']
@@ -356,13 +361,16 @@ class MyGradScaler:
         pass
 
 
-def save_best_model_stats(dir, epoch, test_err, test_data):
+def save_best_model_stats(dir, epoch, test_err, test_data, extra_data):
     content = {
         'Test error': test_err,
         'Epoch': epoch
     }
     for test_set in test_data:
-        content[f'Test set {test_set} error'] = test_data[test_set]['TestError']
+        if isinstance(test_data[test_set], dict):
+            content[f'Test set {test_set} error'] = test_data[test_set]['TestError']
+    if len(extra_data) > 0:
+        content['Extra data'] = str(extra_data)
     fpath = os.path.join(dir, 'visnir_best_model_stats.json')
     with open(fpath, 'w', encoding='utf-8') as f:
         json.dump(content, f, ensure_ascii=False, indent=4)
