@@ -154,8 +154,8 @@ if __name__ == '__main__':
     print(device)
     name = torch.cuda.get_device_name(0)
 
-    ModelsDirName = './artifacts/symmetric_enc_transformer_6/models/'
-    LogsDirName = './artifacts/symmetric_enc_transformer_6/logs/'
+    ModelsDirName = './artifacts/symmetric_enc_transformer_11/models/'
+    LogsDirName = './artifacts/symmetric_enc_transformer_11/logs/'
     Description = 'Symmetric CNN with Triplet loss, no HM'
     BestFileName = 'best_model'
     FileName = 'model_epoch_'
@@ -453,6 +453,7 @@ if __name__ == '__main__':
     if UseWarmUp:
         # WarmUpEpochs = 4
         WarmUpEpochs = 8
+        # WarmUpEpochs = 10
         scheduler_warmup = GradualWarmupSchedulerV2(optimizer, multiplier=1, total_epoch=WarmUpEpochs,
                                                     after_scheduler= StepLR(optimizer, step_size=3, gamma=0.1))
     else:
@@ -490,8 +491,8 @@ if __name__ == '__main__':
                     scheduler.step()
 
                 if type(scheduler).__name__ == 'ReduceLROnPlateau':
-                    scheduler.step(ValError)
-
+                    # scheduler.step(ValError)
+                    scheduler.step(TotalTestError)
         running_loss = 0
         #scheduler_warmup.step(epoch-StartEpoch,running_loss)
 
@@ -618,7 +619,7 @@ if __name__ == '__main__':
 
 
 
-            PrintStep = 1000
+            PrintStep = 20
             if (((i % PrintStep == 0) or (i * InnerBatchSize >= len(Training_DataLoader) - 1)) and (i > 0)) or TestMode:
 
                 if i > 0:
