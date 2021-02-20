@@ -154,8 +154,8 @@ if __name__ == '__main__':
     print(device)
     name = torch.cuda.get_device_name(0)
 
-    ModelsDirName = './artifacts/symmetric_enc_transformer_11/models/'
-    LogsDirName = './artifacts/symmetric_enc_transformer_11/logs/'
+    ModelsDirName = './artifacts/symmetric_enc_transformer_test/models/'
+    LogsDirName = './artifacts/symmetric_enc_transformer_test/logs/'
     Description = 'Symmetric CNN with Triplet loss, no HM'
     BestFileName = 'best_model'
     FileName = 'model_epoch_'
@@ -199,7 +199,7 @@ if __name__ == '__main__':
     AssymetricInitializationPhase = False
 
     TestMode = False
-    use_validation = True
+    use_validation = False
     FreezeSymmetricBlock = False
 
     torch.manual_seed(0)
@@ -209,12 +209,13 @@ if __name__ == '__main__':
     if True:
         GeneratorMode = 'Pairwise'
         #GeneratorMode = 'SelfSupervised'
-        CnnMode = 'Symmetric'
+        # CnnMode = 'Symmetric'
         CnnMode = 'SymmetricAttention'
         # CnnMode = 'SymmetricDecoder'
         NegativeMiningMode = 'Random'
         #NegativeMiningMode = 'Hardest'
         #NegativeMiningMode = 'HardPos'
+        # criterion = OnlineTripletLoss(margin=1)
         criterion = OnlineHardNegativeMiningTripletLoss(margin=1, Mode=NegativeMiningMode,device=device)
         #criterion         = OnlineHaOnlineHardNegativeMiningTripletLossrdNegativeMiningTripletLoss(margin=1, Mode='HardPos', MarginRatio=0.5)
         #criterion = OnlineHardNegativeMiningTripletLoss(margin=1, Mode='HardPos', MarginRatio=1.0/2, PosRatio=1. / 2)
@@ -231,15 +232,19 @@ if __name__ == '__main__':
         weight_decay = 0#1e-5
         DropoutP = 0.5
 
+        torch.manual_seed(0)
+        np.random.seed(0)
+
         OuterBatchSize = 4*12
         InnerBatchSize = 2*12
         Augmentation["Test"] = {'Do': False}
         Augmentation["HorizontalFlip"] = True
         Augmentation["Rotate90"] = True
-        # Augmentation["VerticalFlip"] = True
         # Augmentation["RandomCrop"] = {'Do': True, 'MinDx': 0, 'MaxDx': 0.2, 'MinDy': 0, 'MaxDy': 0.2}
 
-
+        PrintStep = 100
+        # PrintStep = 50
+        # PrintStep = 20
         FreezeSymmetricCnn  = False
         FreezeSymmetricBlock = False
 
@@ -349,14 +354,13 @@ if __name__ == '__main__':
     Data = read_matlab_imdb(TrainFile)
     TrainingSetData = Data['Data']
     TrainingSetLabels = np.squeeze(Data['Labels'])
-    if use_validation:
-        TrainingSetSet = np.squeeze(Data['Set'])
+    TrainingSetSet = np.squeeze(Data['Set'])
     del Data
 
 
     ValSetData = []
+    TrainIdx = np.squeeze(np.asarray(np.where(TrainingSetSet == 1)))
     if use_validation:
-        TrainIdx = np.squeeze(np.asarray(np.where(TrainingSetSet == 1)))
         ValIdx = np.squeeze(np.asarray(np.where(TrainingSetSet == 3)))
 
         # VALIDATION data
@@ -367,9 +371,10 @@ if __name__ == '__main__':
         ValSetData[:, :, :, :, 1] -= ValSetData[:, :, :, :, 1].mean()
         ValSetData = torch.from_numpy(NormalizeImages(ValSetData))
 
-        # TRAINING data
-        TrainingSetData = np.squeeze(TrainingSetData[TrainIdx,])
-        TrainingSetLabels = TrainingSetLabels[TrainIdx]
+    # TRAINING data
+    TrainingSetData = np.squeeze(TrainingSetData[TrainIdx,])
+    TrainingSetData = np.squeeze(TrainingSetData[TrainIdx,])
+    TrainingSetLabels = TrainingSetLabels[TrainIdx]
 
     # define generators
     Training_Dataset = DatasetPairwiseTriplets(TrainingSetData, TrainingSetLabels, InnerBatchSize, Augmentation, GeneratorMode)
@@ -412,10 +417,10 @@ if __name__ == '__main__':
     print('LodaedNegativeMiningMode: ' + LodedNegativeMiningMode)
 
     # -------------------------------------  freeze layers --------------------------------------
-    net.FreezeSymmetricCnn(FreezeSymmetricCnn)
-    net.FreezeSymmetricBlock(FreezeSymmetricBlock)
-
-    net.FreezeAsymmetricCnn(FreezeAsymmetricCnn)
+    # net.FreezeSymmetricCnn(FreezeSymmetricCnn)
+    # net.FreezeSymmetricBlock(FreezeSymmetricBlock)
+    #
+    # net.FreezeAsymmetricCnn(FreezeAsymmetricCnn)
     # ------------------------------------------------------------------------------------------
 
     # -------------------- Initialization -----------------------
@@ -453,7 +458,7 @@ if __name__ == '__main__':
     if UseWarmUp:
         # WarmUpEpochs = 4
         WarmUpEpochs = 8
-        # WarmUpEpochs = 10
+        # WarmUpEpochs = 4
         scheduler_warmup = GradualWarmupSchedulerV2(optimizer, multiplier=1, total_epoch=WarmUpEpochs,
                                                     after_scheduler= StepLR(optimizer, step_size=3, gamma=0.1))
     else:
@@ -617,9 +622,6 @@ if __name__ == '__main__':
                 print('running_loss: '+repr(running_loss/i)[0:8])
 
 
-
-
-            PrintStep = 20
             if (((i % PrintStep == 0) or (i * InnerBatchSize >= len(Training_DataLoader) - 1)) and (i > 0)) or TestMode:
 
                 if i > 0:
@@ -630,8 +632,9 @@ if __name__ == '__main__':
 
                 # val accuracy
                 StepSize = 800
+                net.eval()
+
                 if len(ValSetData) > 0:
-                    net.eval()
                     Emb = EvaluateDualNets(net, ValSetData[:, :, :, :, 0], ValSetData[:, :, :, :, 1],CnnMode,device, StepSize)
 
                     Dist = np.power(Emb['Emb1'] - Emb['Emb2'], 2).sum(1)

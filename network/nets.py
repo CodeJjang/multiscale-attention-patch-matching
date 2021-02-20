@@ -78,11 +78,11 @@ class Model(nn.Module):
             nn.BatchNorm2d(128, affine=False),
         )
 
-        self.output_num = [8, 4, 2, 1]
+        # self.output_num = [8, 4, 2, 1]
         self.output_num = [8]
 
         self.fc1 = nn.Sequential(
-            #nn.Linear(10880, 128),
+            # nn.Linear(10880, 128)
             nn.Linear(8192, 128),
         )
 
