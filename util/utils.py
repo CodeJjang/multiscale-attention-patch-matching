@@ -1,7 +1,97 @@
-from itertools import combinations
-
 import numpy as np
 import torch
+import glob
+import os
+import json
+from torch.optim.lr_scheduler import ReduceLROnPlateau
+
+
+
+def LoadModel(net,StartBestModel,ModelsDirName,BestFileName,UseBestScore,device, load_epoch=None):
+
+    scheduler = None
+    optimizer = None
+
+    LowestError = 1e5
+
+    NegativeMiningMode = 'Random'
+
+    if StartBestModel:
+        FileList = glob.glob(ModelsDirName + BestFileName + '.pth')
+    else:
+        FileList = glob.glob(ModelsDirName + "model*")
+
+    if FileList:
+        FileList.sort(key=os.path.getmtime)
+
+        if load_epoch is not None:
+            model_path = ModelsDirName + 'model_epoch_%s.pth' % load_epoch
+            print('%s loaded' % model_path)
+            checkpoint = torch.load(model_path)
+        else:
+            print(FileList[-1] + ' loaded')
+            checkpoint = torch.load(FileList[-1])
+
+        if ('LowestError' in checkpoint.keys()) and UseBestScore:
+            LowestError = checkpoint['LowestError']
+
+        if 'NegativeMiningMode' in checkpoint.keys():
+            NegativeMiningMode = checkpoint['NegativeMiningMode']
+
+        net_dict = net.state_dict()
+        checkpoint['state_dict'] = {k: v for k, v in checkpoint['state_dict'].items() if
+                                    (k in net_dict) and (net_dict[k].shape == checkpoint['state_dict'][k].shape)}
+
+        net.load_state_dict(checkpoint['state_dict'], strict=False)
+
+        if 'optimizer_name' in checkpoint.keys():
+            if checkpoint['optimizer_name'] == 'Lookahead':
+                optimizer = RangerLars(net.parameters())
+
+            if checkpoint['optimizer_name'] == 'Adam':
+                    optimizer = torch.optim.Adam(net.parameters())
+            try:
+                #optimizer.load_state_dict(checkpoint['optimizer'])
+                optimizer = checkpoint['optimizer']
+                for state in optimizer.state.values():
+                    for k, v in state.items():
+                        if isinstance(v, torch.Tensor):
+                            state[k] = v.cuda(device)
+            except Exception as e:
+                print(e)
+                print('Optimizer loading error')
+
+
+
+
+        if ('scheduler_name' in checkpoint.keys()) and (optimizer != None):
+
+            try:
+                if checkpoint['scheduler_name'] == 'ReduceLROnPlateau':
+                    scheduler = ReduceLROnPlateau(optimizer, mode='min', factor=0.5, patience=6, verbose=True)
+
+                if checkpoint['scheduler_name'] == 'StepLR':
+                    scheduler = StepLR(optimizer, step_size=1, gamma=10)
+
+                #scheduler.load_state_dict(checkpoint['scheduler'])
+                scheduler= checkpoint['scheduler']
+            except Exception as e:
+                print(e)
+                print('Optimizer loading error')
+
+        StartEpoch = checkpoint['epoch'] + 1
+    else:
+        print('Weights file NOT loaded!!')
+        optimizer  = None
+        StartEpoch = 0
+
+    FileList = glob.glob(ModelsDirName + BestFileName + '.pth')
+    # noinspection PyInterpreter
+
+    print('LowestError: ' + repr(LowestError)[0:6])
+
+    return net,optimizer,LowestError,StartEpoch,scheduler,NegativeMiningMode
+
 
 
 def pdist(vectors):
@@ -221,3 +311,66 @@ def RandomNegativeTripletSelector(margin, cpu=False): return FunctionNegativeTri
 def SemihardNegativeTripletSelector(margin, cpu=False): return FunctionNegativeTripletSelector(margin=margin,
                                                                                   negative_selection_fn=lambda x: semihard_negative(x, margin),
                                                                                   cpu=cpu)
+
+
+
+
+class MultiEpochsDataLoader(torch.utils.data.DataLoader):
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self._DataLoader__initialized = False
+        self.batch_sampler = _RepeatSampler(self.batch_sampler)
+        self._DataLoader__initialized = True
+        self.iterator = super().__iter__()
+
+    def __len__(self):
+        return len(self.batch_sampler.sampler)
+
+    def __iter__(self):
+        for i in range(len(self)):
+            yield next(self.iterator)
+
+
+class _RepeatSampler(object):
+    """ Sampler that repeats forever.
+    Args:
+        sampler (Sampler)
+    """
+
+    def __init__(self, sampler):
+        self.sampler = sampler
+
+    def __iter__(self):
+        while True:
+            yield from iter(self.sampler)
+
+
+
+
+class MyGradScaler:
+    def __init__(self):
+        pass
+    def scale(self, loss):
+        return loss
+    def unscale_(self, optimizer):
+        pass
+    def step(self, optimizer):
+        optimizer.step()
+    def update(self):
+        pass
+
+
+def save_best_model_stats(dir, epoch, test_err, test_data, extra_data):
+    content = {
+        'Test error': test_err,
+        'Epoch': epoch
+    }
+    for test_set in test_data:
+        if isinstance(test_data[test_set], dict):
+            content[f'Test set {test_set} error'] = test_data[test_set]['TestError']
+    if len(extra_data) > 0:
+        content['Extra data'] = str(extra_data)
+    fpath = os.path.join(dir, 'visnir_best_model_stats.json')
+    with open(fpath, 'w', encoding='utf-8') as f:
+        json.dump(content, f, ensure_ascii=False, indent=4)
