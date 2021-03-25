@@ -45,11 +45,7 @@ def LoadModel(net,StartBestModel,ModelsDirName,BestFileName,UseBestScore,device,
         net.load_state_dict(checkpoint['state_dict'], strict=False)
 
         if 'optimizer_name' in checkpoint.keys():
-            if checkpoint['optimizer_name'] == 'Lookahead':
-                optimizer = RangerLars(net.parameters())
-
-            if checkpoint['optimizer_name'] == 'Adam':
-                    optimizer = torch.optim.Adam(net.parameters())
+            optimizer = torch.optim.Adam(net.parameters())
             try:
                 #optimizer.load_state_dict(checkpoint['optimizer'])
                 optimizer = checkpoint['optimizer']
@@ -361,7 +357,7 @@ class MyGradScaler:
         pass
 
 
-def save_best_model_stats(dir, epoch, test_err, test_data, extra_data):
+def save_best_model_stats(dir, epoch, test_err, test_data):
     content = {
         'Test error': test_err,
         'Epoch': epoch
@@ -369,8 +365,6 @@ def save_best_model_stats(dir, epoch, test_err, test_data, extra_data):
     for test_set in test_data:
         if isinstance(test_data[test_set], dict):
             content[f'Test set {test_set} error'] = test_data[test_set]['TestError']
-    if len(extra_data) > 0:
-        content['Extra data'] = str(extra_data)
     fpath = os.path.join(dir, 'visnir_best_model_stats.json')
     with open(fpath, 'w', encoding='utf-8') as f:
         json.dump(content, f, ensure_ascii=False, indent=4)

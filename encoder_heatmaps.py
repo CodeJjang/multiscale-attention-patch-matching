@@ -36,7 +36,7 @@ from network.nt_xent import NTXentLoss
 from hpatches.utils.load_dataset import load_dataset as load_hpatches_dataset
 import h5py
 import warnings
-import run_match_patches3
+import train
 warnings.filterwarnings("ignore", message="UserWarning: albumentations.augmentations.transforms.RandomResizedCrop")
 import matplotlib.pyplot as plt
 import matplotlib.image as mpimg
@@ -283,7 +283,7 @@ if __name__ == '__main__':
     BestFileName = 'best_model'
     FileName = 'model_epoch_'
     ds_name = 'VisNir'
-    TrainFile, TestDir = run_match_patches3.load_datasets_paths(ds_name)
+    TrainFile, TestDir = train.load_datasets_paths(ds_name)
     TestDecimation = 1
     FPR95 = 0.8
 

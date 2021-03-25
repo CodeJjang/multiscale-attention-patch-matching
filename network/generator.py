@@ -116,32 +116,12 @@ class DatasetPairwiseTriplets(data.Dataset):
         self.RowsNo = Data.shape[1]
         self.ColsNo = Data.shape[2]
 
-        if Mode == 'SelfSupervised':
 
-            # get a set of data augmentation transformations as described in the SimCLR paper.
-            # color_jitter = transforms.ColorJitter(0.8 * self.s, 0.8 * self.s, 0.8 * self.s, 0.2 * self.s)
-            self.transform = transforms.Compose([ transforms.RandomResizedCrop(size=self.RowsNo),
-                                                  transforms.RandomHorizontalFlip(),
-                                                  transforms.RandomVerticalFlip(),
-                                                  # transforms.RandomApply([color_jitter], p=0.8),
-                                                  #transforms.RandomGrayscale(p=0.2),
-                                                  GaussianBlur(kernel_size=int(int(0.1 * self.RowsNo)/2)*2+1),
-                                                  transforms.ToTensor()])
-
-
-        if Mode == 'Pairwise':
-            self.transform = A.ReplayCompose([
-                # A.Transpose(always_apply=False, p=0.5),
-                # A.Flip(always_apply=False, p=0.5),
-                # A.RandomResizedCrop(self.RowsNo, self.ColsNo,scale=(0.9, 1.1) ,ratio=(0.9, 1.1), interpolation=cv2.INTER_CUBIC,always_apply=False,p=0.5),
-                A.Rotate(limit=5, interpolation=cv2.INTER_CUBIC, border_mode=cv2.BORDER_REFLECT_101, always_apply=False,p=0.5),
-                A.HorizontalFlip(always_apply=False, p=0.5),
-                A.VerticalFlip(always_apply=False, p=0.5),
-                #A.RandomBrightnessContrast(brightness_limit=0.2, contrast_limit=0.2, brightness_by_max=True,always_apply=False, p=0.5),
-                #A.RandomGamma(gamma_limit=136, always_apply=False, p=0.5),
-                #A.JpegCompression(quality_lower=40, quality_upper=100, p=0.5),
-                #A.HueSaturationValue(hue_shift_limit=172, sat_shift_limit=20, val_shift_limit=27, always_apply=False, p=0.5)
-            ])
+        self.transform = A.ReplayCompose([
+            A.Rotate(limit=5, interpolation=cv2.INTER_CUBIC, border_mode=cv2.BORDER_REFLECT_101, always_apply=False,p=0.5),
+            A.HorizontalFlip(always_apply=False, p=0.5),
+            A.VerticalFlip(always_apply=False, p=0.5),
+        ])
 
     def __len__(self):
         'Denotes the total number of samples'
@@ -151,11 +131,7 @@ class DatasetPairwiseTriplets(data.Dataset):
         'Generates one sample of data'
 
         # Select pos2 pairs
-        if (self.Mode == 'Pairwise') or (self.Mode == 'SelfSupervised'):
-            PosIdx = np.random.randint(self.PositiveIdxNo, size=self.batch_size)
-
-        if self.Mode == 'Test':
-            PosIdx = index
+        PosIdx = np.random.randint(self.PositiveIdxNo, size=self.batch_size)
 
 
         PosIdx    = self.PositiveIdx[PosIdx]
@@ -168,64 +144,53 @@ class DatasetPairwiseTriplets(data.Dataset):
         pos2 = PosImages[:, :, :, 1]
 
 
-        if self.Mode == 'SelfSupervised':
-            Pos  = np.concatenate((pos1,pos2),axis = 0)
-            pos1 = np.zeros_like(Pos)
-            pos2 = np.zeros_like(Pos)
+        for i in range(0, PosImages.shape[0]):
 
-            for i in range(0, Pos.shape[0]):
-                pos1[i,] = self.transform(Image.fromarray(Pos[i,]))
-                pos2[i,] = self.transform(Image.fromarray(Pos[i,]))
+            # Flip LR
+            if (np.random.uniform(0, 1) > 0.5) and self.Augmentation["HorizontalFlip"]:
+                pos1[i,] = np.fliplr(pos1[i,])
+                pos2[i,] = np.fliplr(pos2[i,])
 
+            #flip UD
+            if (np.random.uniform(0, 1) > 0.5) and self.Augmentation["VerticalFlip"]:
+                pos1[i,] = np.flipud(pos1[i,])
+                pos2[i,] = np.flipud(pos2[i,])
 
-        if self.Mode == 'Pairwise':
-            for i in range(0, PosImages.shape[0]):
+            #test
+            if self.Augmentation["Test"]:
 
-                # Flip LR
-                if (np.random.uniform(0, 1) > 0.5) and self.Augmentation["HorizontalFlip"]:
-                    pos1[i,] = np.fliplr(pos1[i,])
-                    pos2[i,] = np.fliplr(pos2[i,])
-
-                #flip UD
-                if (np.random.uniform(0, 1) > 0.5) and self.Augmentation["VerticalFlip"]:
-                    pos1[i,] = np.flipud(pos1[i,])
-                    pos2[i,] = np.flipud(pos2[i,])
-
-                #test
-                if self.Augmentation["Test"]['Do']:
-
-                    #plt.imshow(pos1[i,:,:],cmap='gray');plt.show();
-                    data= self.transform(image=pos1[i, :, :])
-                    pos1[i,] = data['image']
-                    pos2[i,] = A.ReplayCompose.replay(data['replay'], image=pos2[i, :, :])['image']
+                #plt.imshow(pos1[i,:,:],cmap='gray');plt.show();
+                data= self.transform(image=pos1[i, :, :])
+                pos1[i,] = data['image']
+                pos2[i,] = A.ReplayCompose.replay(data['replay'], image=pos2[i, :, :])['image']
 
 
-                # rotate:0, 90, 180,270,
-                if self.Augmentation["Rotate90"]:
-                    idx = np.random.randint(low=0, high=4, size=1)[0]  # choose rotation
-                    pos1[i,] = np.rot90(pos1[i, ], idx)
-                    pos2[i,] = np.rot90(pos2[i, ], idx)
+            # rotate:0, 90, 180,270,
+            if self.Augmentation["Rotate90"]:
+                idx = np.random.randint(low=0, high=4, size=1)[0]  # choose rotation
+                pos1[i,] = np.rot90(pos1[i, ], idx)
+                pos2[i,] = np.rot90(pos2[i, ], idx)
 
 
-                #random crop
-                if  (np.random.uniform(0, 1) > 0.5) & self.Augmentation["RandomCrop"]['Do']:
-                    dx = np.random.uniform(self.Augmentation["RandomCrop"]['MinDx'], self.Augmentation["RandomCrop"]['MaxDx'])
-                    dy = np.random.uniform(self.Augmentation["RandomCrop"]['MinDy'], self.Augmentation["RandomCrop"]['MaxDy'])
+            #random crop
+            if  (np.random.uniform(0, 1) > 0.5) & self.Augmentation["RandomCrop"]['Do']:
+                dx = np.random.uniform(self.Augmentation["RandomCrop"]['MinDx'], self.Augmentation["RandomCrop"]['MaxDx'])
+                dy = np.random.uniform(self.Augmentation["RandomCrop"]['MinDy'], self.Augmentation["RandomCrop"]['MaxDy'])
 
-                    dx=dy
+                dx=dy
 
-                    x0 = int(dx*self.ColsNo)
-                    y0 = int(dy*self.RowsNo)
+                x0 = int(dx*self.ColsNo)
+                y0 = int(dy*self.RowsNo)
 
-                    #ShowRowImages(pos1[0:1,:,:])
-                    #plt.imshow(pos1[i,:,:],cmap='gray');plt.show();
-                    #aa = pos1[i,y0:,x0:]
+                #ShowRowImages(pos1[0:1,:,:])
+                #plt.imshow(pos1[i,:,:],cmap='gray');plt.show();
+                #aa = pos1[i,y0:,x0:]
 
-                    pos1[i, ] = resize(pos1[i,y0:,x0:], (self.RowsNo, self.ColsNo))
+                pos1[i, ] = resize(pos1[i,y0:,x0:], (self.RowsNo, self.ColsNo))
 
-                    #ShowRowImages(pos1[0:1, :, :])
+                #ShowRowImages(pos1[0:1, :, :])
 
-                    pos2[i,] = resize(pos2[i,y0:,x0:], (self.RowsNo, self.ColsNo))
+                pos2[i,] = resize(pos2[i,y0:,x0:], (self.RowsNo, self.ColsNo))
 
 
         Result = dict()

@@ -15,12 +15,8 @@ from tqdm import tqdm
 import GPUtil
 import json
 import math
+import argparse
 from pathlib import Path
-
-# my classes
-from hpatches.utils.hpatch import hpatch_descr, hpatch_sequence
-from hpatches.utils.results import results_verification, results_matching, results_retrieval
-from hpatches.utils.tasks import eval_verification, eval_matching, eval_retrieval
 from network.my_classes import imshow, ShowRowImages, ShowTwoRowImages, EvaluateDualNets, EvaluateSingleNet
 from network.my_classes import FPR95Accuracy,SingleNet, MetricLearningCnn, EvaluateNet,EvaluateDualNets
 from network.generator import DatasetPairwiseTriplets,NormalizeImages
@@ -31,42 +27,34 @@ from util.warmup_scheduler import GradualWarmupSchedulerV2
 from util.read_matlab_imdb import read_matlab_imdb
 from util.utils import LoadModel,MultiEpochsDataLoader,MyGradScaler, save_best_model_stats
 from network.nt_xent import NTXentLoss
-from hpatches.utils.load_dataset import load_dataset as load_hpatches_dataset
-import h5py
 import warnings
 warnings.filterwarnings("ignore", message="UserWarning: albumentations.augmentations.transforms.RandomResizedCrop")
 
 def assert_dir(dir_path):
     Path(dir_path).mkdir(parents=True, exist_ok=True)
 
-def load_datasets_paths(ds_name):
-    if ds_name == 'VisNir':
-        test_dir = 'F:\\multisensor\\test\\'
-        train_file = 'F:\\multisensor\\train\\Vis-Nir_Train.hdf5'
+def load_datasets_paths(ds_name, ds_path):
+    if ds_name == 'visnir':
+        test_dir = os.path.join(ds_path, 'test\\')
+        train_file = os.path.join(ds_path, 'train\\Vis-Nir_Train.hdf5')
     elif ds_name == 'cuhk':
-        test_dir = 'D:\\multisensor\\datasets\\cuhk\\test\\'
-        train_file = 'D:\\multisensor\\datasets\\cuhk\\train.hdf5'
+        test_dir = os.path.join(ds_path, 'cuhk\\test\\')
+        train_file = os.path.join(ds_path, 'cuhk\\train.hdf5')
     elif ds_name == 'vedai':
-        test_dir = 'D:\\multisensor\\datasets\\vedai\\test\\'
-        train_file = 'D:\\multisensor\\datasets\\vedai\\train.hdf5'
+        test_dir = os.path.join(ds_path, 'vedai\\test\\')
+        train_file = os.path.join(ds_path, 'vedai\\train.hdf5')
     elif ds_name == 'visnir-grid':
-        test_dir = 'D:\\multisensor\\datasets\\Vis-Nir_grid\\test\\'
-        train_file = 'D:\\multisensor\\datasets\\Vis-Nir_grid\\train.hdf5'
+        test_dir = os.path.join(ds_path, 'Vis-Nir_grid\\test\\')
+        train_file = os.path.join(ds_path, 'Vis-Nir_grid\\train.hdf5')
     elif ds_name == 'brown-liberty':
-        test_dir = 'D:\\multisensor\\datasets\\brown\\patchdata\\test_yos_not\\'
-        train_file = 'D:\\multisensor\\datasets\\brown\\patchdata\\liberty_full_for_multisensor.hdf5'
+        test_dir = os.path.join(ds_path, 'brown\\patchdata\\test_yos_not\\')
+        train_file = os.path.join(ds_path, 'brown\\patchdata\\liberty_full_for_multisensor.hdf5')
     elif ds_name == 'brown-notredame':
-        test_dir = 'D:\\multisensor\\datasets\\brown\\patchdata\\test_lib_yos\\'
-        train_file = 'D:\\multisensor\\datasets\\brown\\patchdata\\notredame_full_for_multisensor.hdf5'
+        test_dir = os.path.join(ds_path, 'brown\\patchdata\\test_lib_yos\\')
+        train_file = os.path.join(ds_path, 'brown\\patchdata\\notredame_full_for_multisensor.hdf5')
     elif ds_name == 'brown-yosemite':
-        test_dir = 'D:\\multisensor\\datasets\\brown\\patchdata\\test_lib_not\\'
-        train_file = 'D:\\multisensor\\datasets\\brown\\patchdata\\yosemite_full_for_multisensor.hdf5'
-    elif ds_name == 'hpatches-liberty':
-        test_dir = 'D:\\multisensor\\datasets\\hpatches-benchmark\\data\\hpatches-release-multisensor\\data_v2.hdf5'
-        train_file = 'D:\\multisensor\\datasets\\brown\\patchdata\\liberty_full_for_multisensor.hdf5'
-    elif ds_name == 'hpatches-all-brown':
-        test_dir = 'D:\\multisensor\\datasets\\hpatches-benchmark\\data\\hpatches-release-multisensor\\data_v2.hdf5'
-        train_file = 'D:\\multisensor\\datasets\\brown\\patchdata\\full_for_multisensor.hdf5'
+        test_dir = os.path.join(ds_path, 'brown\\patchdata\\test_lib_not\\')
+        train_file = os.path.join(ds_path, 'brown\\patchdata\\yosemite_full_for_multisensor.hdf5')
     return train_file, test_dir
 
 
@@ -99,17 +87,16 @@ def load_test_datasets(TestDir):
     return TestData
 
 
-def evaluate_test(TestData, TestDecimation1, CnnMode, device, StepSize):
+def evaluate_test(TestData, CnnMode, device, StepSize):
     NoSamples = 0
     TotalTestError = 0
     for DataName in TestData:
-        EmbTest = EvaluateDualNets(net, TestData[DataName]['Data'][0::TestDecimation1, :, :, :, 0],
-                                   TestData[DataName]['Data'][0::TestDecimation1, :, :, :, 1], CnnMode, device,
+        EmbTest = EvaluateDualNets(net, TestData[DataName]['Data'][:, :, :, :, 0],
+                                   TestData[DataName]['Data'][:, :, :, :, 1], CnnMode, device,
                                    StepSize)
 
         Dist = np.power(EmbTest['Emb1'] - EmbTest['Emb2'], 2).sum(1)
-        TestData[DataName]['TestError'] = FPR95Accuracy(Dist, TestData[DataName]['Labels'][
-                                                              0::TestDecimation1]) * 100
+        TestData[DataName]['TestError'] = FPR95Accuracy(Dist, TestData[DataName]['Labels'][:]) * 100
         TotalTestError += TestData[DataName]['TestError'] * TestData[DataName]['Data'].shape[0]
         NoSamples += TestData[DataName]['Data'].shape[0]
     TotalTestError /= NoSamples
@@ -118,50 +105,47 @@ def evaluate_test(TestData, TestDecimation1, CnnMode, device, StepSize):
     return TotalTestError
 
 
-def evaluate_hpatch(TestData, TestDecimation1, CnnMode, device, StepSize, splits, taskdir, extra_data):
-    descriptors = {}
-    for seq_name, seq_data in TestData.items():
-        local_descr_map = {}
-        for t in hpatch_descr.itr:
-            EmbTest = EvaluateSingleNet(net, getattr(seq_data, t), CnnMode, device, StepSize)['Emb1']
-            local_descr_map[t] = EmbTest
-        descriptors[seq_name] = hpatch_descr(descr_map=local_descr_map)
-    descriptors['dim'] = descriptors[list(descriptors.keys())[0]].dim
-    descriptors['distance'] = 'L2'
-    eval = eval_verification(descriptors, splits['full'], taskdir)
-    verification_map, verification_data = results_verification(CnnMode, splits['full'], eval)
-    print('Verification mAP:', verification_map * 100)
-    eval = eval_matching(descriptors, splits['full'])
-    matching_map, matching_data = results_matching(CnnMode, splits['full'], eval)
-    print('Matching mAP:', matching_map * 100)
-    eval = eval_retrieval(descriptors, splits['full'], taskdir)
-    retrieval_map, retrieval_data = results_retrieval(CnnMode, splits['full'], eval)
-    print('Retrieval mAP:', retrieval_map * 100)
-    extra_data['verification'] = {'mAP': verification_map, 'data': verification_data}
-    extra_data['matching'] = {'mAP': matching_map, 'data': matching_data}
-    extra_data['retrieval'] = {'mAP': retrieval_map, 'data': retrieval_data}
-    return 1 - verification_map, 1 - matching_map, 1 - retrieval_map
+def parse_args():
+    parser = argparse.ArgumentParser(description='Train models for multimodal patch matching.')
+    parser.add_argument('--epochs', type=int, default=100, help='epochs')
+    parser.add_argument('--artifacts', default='./artifacts', help='artifacts path')
+    parser.add_argument('--exp-name', default='symmetric_enc_transformer_test_3', help='experiment name')
+    parser.add_argument('--evaluate-every', type=int, default=50, help='evaluate network and print steps')
+    parser.add_argument('--skip-validation', type=bool, const=True, default=False, help='whether to skip validation evaluation', nargs='?')
+    parser.add_argument('--continue-from-checkpoint', type=bool, const=True, default=False,
+                        nargs='?', help='whether to continue training from checkpoint')
+    parser.add_argument('--continue-from-best-score', type=bool, const=True, default=False,
+                        nargs='?', help='whether to use best score when continuing training')
+    parser.add_argument('--continue-from-best-model', type=bool, const=True, default=True,
+                        nargs='?', help='whether to continue training using best model')
+    parser.add_argument('--batch-size', type=int, default=40, help='batch size')
+    parser.add_argument('--inner-batch-size', type=int, default=24, help='inner batch size of positive pairs')
+    parser.add_argument('--lr', type=float, default=1e-1, help='learning rate')
+    parser.add_argument('--dropout', type=float, default=0.5, help='dropout')
+    parser.add_argument('--weight-decay', type=float, default=0, help='weight decay')
+    parser.add_argument('--cnn-mode', default='SymmetricAttention', help='cnn mode')
+    parser.add_argument('--dataset-name', default='visnir', help='dataset name')
+    parser.add_argument('--dataset-path', default='visnir', help='dataset name')
+    return parser.parse_args()
 
 
 if __name__ == '__main__':
+    args = parse_args()
     np.random.seed(0)
     torch.manual_seed(0)
-    device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")#"cuda:0"
+    device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
     NumGpus = torch.cuda.device_count()
     torch.cuda.empty_cache()
     GPUtil.showUtilization()
-    print(device)
+    print('Using', device)
     name = torch.cuda.get_device_name(0)
 
-    ModelsDirName = './artifacts/symmetric_enc_transformer_test_2/models/'
-    LogsDirName = './artifacts/symmetric_enc_transformer_test/logs/'
-    Description = 'Symmetric CNN with Triplet loss, no HM'
+    ModelsDirName = os.path.join(args.artifacts, args.exp_name, 'models')
+    LogsDirName = os.path.join(args.artifacts, args.exp_name, 'logs')
+    Description = 'Symmetric CNN with Triplet loss and transformer encoder'
     BestFileName = 'best_model'
     FileName = 'model_epoch_'
-    ds_name = 'VisNir'
-    TrainFile, TestDir = load_datasets_paths(ds_name)
-    TestDecimation = 1
-    FPR95 = 0.8
+    TrainFile, TestDir = load_datasets_paths(args.dataset_name, args.dataset_path)
 
     assert_dir(ModelsDirName)
     assert_dir(LogsDirName)
@@ -169,64 +153,39 @@ if __name__ == '__main__':
     scaler = MyGradScaler()
 
     writer = SummaryWriter(LogsDirName)
-    LowestError = 1e10
 
     # ----------------------------     configuration   ---------------------------
     Augmentation = {}
 
-    assymetric_init = False
-
     TestMode = False
-    use_validation = False
-    FreezeSymmetricBlock = False
-
-    torch.manual_seed(0)
-    np.random.seed(0)
-    #torch.set_deterministic(True)
-
+    skip_validation = args.skip_validation
 
     GeneratorMode = 'Pairwise'
-    CnnMode = 'SymmetricAttention'
+    CnnMode = args.cnn_mode
     NegativeMiningMode = 'Random'
     criterion = OnlineHardNegativeMiningTripletLoss(margin=1, Mode=NegativeMiningMode,device=device)
-    Description = 'Symmetric Hardest'
 
     InitializeOptimizer = True
     UseWarmUp           = True
 
-    StartBestModel      = False
-    UseBestScore        = False
+    LearningRate = args.lr
 
-    LearningRate = 1e-1
+    weight_decay = args.weight_decay
+    DropoutP = args.dropout
 
-    weight_decay = 0
-    DropoutP = 0.5
-
-    OuterBatchSize = 4*12
-    InnerBatchSize = 2*12
+    OuterBatchSize = args.batch_size
+    InnerBatchSize = args.inner_batch_size
     Augmentation["Test"] = {'Do': False}
     Augmentation["HorizontalFlip"] = True
     Augmentation["Rotate90"] = True
     Augmentation["VerticalFlip"] = False
-    Augmentation["HorizontalFlip"] = True
+    Augmentation["RandomCrop"] = {'Do': False}
     Augmentation["Test"] = False
 
-    PrintStep = 100
-    FreezeSymmetricCnn  = False
-    FreezeSymmetricBlock = False
+    PrintStep = args.evaluate_every
 
-    FreezeAsymmetricCnn = True
-
-
-
-
-    StartBestModel = False
-    UseBestScore   = False
-
-
-
-
-
+    StartBestModel = args.continue_from_best_model
+    UseBestScore   = args.continue_from_best_score
 
 
     # ----------------------------- read data----------------------------------------------
@@ -239,7 +198,7 @@ if __name__ == '__main__':
 
     ValSetData = []
     TrainIdx = np.squeeze(np.asarray(np.where(TrainingSetSet == 1)))
-    if use_validation:
+    if not skip_validation:
         ValIdx = np.squeeze(np.asarray(np.where(TrainingSetSet == 3)))
 
         # VALIDATION data
@@ -268,21 +227,9 @@ if __name__ == '__main__':
 
 
     StartEpoch = 0
-
-    net,optimizer,LowestError,StartEpoch,scheduler,LodedNegativeMiningMode = LoadModel(net, StartBestModel, ModelsDirName, BestFileName, UseBestScore, device)
-    print('LodaedNegativeMiningMode: ' + LodedNegativeMiningMode)
-
-    # -------------------------------------  freeze layers --------------------------------------
-    # net.FreezeSymmetricCnn(FreezeSymmetricCnn)
-    # net.FreezeSymmetricBlock(FreezeSymmetricBlock)
-    #
-    # net.FreezeAsymmetricCnn(FreezeAsymmetricCnn)
-    # ------------------------------------------------------------------------------------------
-
-    # -------------------- Initialization -----------------------
-    if assymetric_init:
-        net.netAS1 = copy.deepcopy(net.module.netS)
-        net.netAS2 = copy.deepcopy(net.module.netS)
+    LowestError = 1e5
+    if args.continue_from_checkpoint:
+        net,optimizer,LowestError,StartEpoch,scheduler,loaded_negative_mining_mode = LoadModel(net, StartBestModel, ModelsDirName, BestFileName, UseBestScore, device)
 
 
     if NumGpus > 1:
@@ -297,24 +244,14 @@ if __name__ == '__main__':
              {'params': filter(lambda p: p.requires_grad == False, net.parameters()),'lr': 0, 'weight_decay': 0}],
             lr=0, weight_decay=0.00)
 
-        # scheduler = StepLR(optimizer, step_size=10, gamma=math.sqrt(0.1))
-
-    # ------------------------------------------------------------------------------------------
-
-
-
-
 
     ########################################################################
     # Train the network
     scheduler = ReduceLROnPlateau(optimizer, mode='min', factor=0.1, patience=3, verbose=True)
-    #LRscheduler =  StepLR(optimizer, step_size=10, gamma=0.1)
 
 
     if UseWarmUp:
-        # WarmUpEpochs = 4
         WarmUpEpochs = 8
-        # WarmUpEpochs = 4
         scheduler_warmup = GradualWarmupSchedulerV2(optimizer, multiplier=1, total_epoch=WarmUpEpochs,
                                                     after_scheduler= StepLR(optimizer, step_size=3, gamma=0.1))
     else:
@@ -327,16 +264,11 @@ if __name__ == '__main__':
     print(CnnMode + ' training\n')
 
 
-    # writer.add_graph(net, images)
     for epoch in range(StartEpoch, 1000):  # loop over the dataset multiple times
 
         running_loss_pos = 0
         running_loss_neg = 0
         optimizer.zero_grad()
-
-        #print('\n' + colored('Gain = ' + repr(net.module.Gain.item())[0:6], 'cyan', attrs=['reverse', 'blink']))
-        #print('\n' + colored('Gain1 = ' +repr(net.module.Gain1.item())[0:6], 'cyan', attrs=['reverse', 'blink']))
-        #print('\n' + colored('Gain2 = ' +repr(net.module.Gain2.item())[0:6], 'cyan', attrs=['reverse', 'blink']))
 
 
         #warmup
@@ -362,53 +294,32 @@ if __name__ == '__main__':
             str += repr(param_group['lr']) + ' '
         print(colored(str, 'blue', attrs=['reverse', 'blink']))
 
-        print('FreezeSymmetricCnn = ' + repr(FreezeSymmetricCnn) + '\nFreezeAsymmetricCnn = '+repr(FreezeAsymmetricCnn) + '\n')
         print('NegativeMiningMode = ' + criterion.Mode)
         print('CnnMode = '+CnnMode + '\nGeneratorMode = ' + GeneratorMode)
 
-        Case1 = (criterion.Mode == 'Random') and (optimizer.param_groups[0]['lr'] <= (LearningRate/1e3 + 1e-8)) \
+        finished_warmup = (criterion.Mode == 'Random') and (optimizer.param_groups[0]['lr'] <= (LearningRate/1e3 + 1e-8)) \
                 and (epoch-StartEpoch>WarmUpEpochs)
-        Case2 = (CnnMode == 'Hybrid') and (criterion.Mode == 'Hardest') and (optimizer.param_groups[0]['lr'] <= (LearningRate/1e3 +1e-8)) \
-                and (FreezeSymmetricCnn==True)
-        if Case1 or Case2:
-            if Case1:
-                #print('Switching Random->Hardest')
-                print(colored('Switching Random->Hardest', 'green', attrs=['reverse', 'blink']))
-                criterion = OnlineHardNegativeMiningTripletLoss(margin=1, Mode = 'Hardest',device=device)
+        if finished_warmup:
+            print(colored('Switching Random->Hardest', 'green', attrs=['reverse', 'blink']))
+            criterion = OnlineHardNegativeMiningTripletLoss(margin=1, Mode = 'Hardest',device=device)
 
-                LearningRate = 1e-1
-                optimizer = torch.optim.Adam(
-                    [{'params': filter(lambda p: p.requires_grad == True, net.parameters()), 'lr': LearningRate,
-                      'weight_decay': weight_decay},
-                     {'params': filter(lambda p: p.requires_grad == False, net.parameters()), 'lr': 0,
-                      'weight_decay': 0}],
-                    lr=0, weight_decay=0.00)
+            LearningRate = 1e-1
+            optimizer = torch.optim.Adam(
+                [{'params': filter(lambda p: p.requires_grad == True, net.parameters()), 'lr': LearningRate,
+                  'weight_decay': weight_decay},
+                 {'params': filter(lambda p: p.requires_grad == False, net.parameters()), 'lr': 0,
+                  'weight_decay': 0}],
+                lr=0, weight_decay=0.00)
 
-                #start with warmup
-                scheduler_warmup = GradualWarmupSchedulerV2(optimizer, multiplier=1, total_epoch=WarmUpEpochs)
-                StartEpoch = epoch
+            #start with warmup
+            scheduler_warmup = GradualWarmupSchedulerV2(optimizer, multiplier=1, total_epoch=WarmUpEpochs)
+            StartEpoch = epoch
 
-                if type(scheduler).__name__ == 'StepLR':
-                    scheduler =  StepLR(optimizer, step_size=10, gamma=0.1)
+            if type(scheduler).__name__ == 'StepLR':
+                scheduler =  StepLR(optimizer, step_size=10, gamma=0.1)
 
-                if type(scheduler).__name__ == 'ReduceLROnPlateau':
-                    scheduler = ReduceLROnPlateau(optimizer, mode='min', factor=0.1, patience=3, verbose=True)
-
-
-
-            if Case2:
-                print(colored('Hybrid: unfreezing symmetric and assymetric\n', 'green', attrs=['reverse', 'blink']))
-                #print('Hybrid: unfreezing symmetric and assymetric\n')
-                if NumGpus == 1:
-                    net.FreezeSymmetricCnn(False)
-                    net.FreezeAsymmetricCnn(False)
-                else:
-                    net.module.FreezeSymmetricCnn(False)
-                    net.module.FreezeAsymmetricCnn(False)
-
-                FreezeSymmetricCnn  = False
-                FreezeAsymmetricCnn = False
-
+            if type(scheduler).__name__ == 'ReduceLROnPlateau':
+                scheduler = ReduceLROnPlateau(optimizer, mode='min', factor=0.1, patience=3, verbose=True)
 
 
 
@@ -465,33 +376,12 @@ if __name__ == '__main__':
                     Dist = np.power(Emb['Emb1'] - Emb['Emb2'], 2).sum(1)
                     ValError = FPR95Accuracy(Dist, ValSetLabels) * 100
                     del Emb
-                    # estimate fpr95 threshold
-                    PosValIdx = np.squeeze(np.asarray(np.where(ValSetLabels == 1)))
-                    CurrentFPR95 = np.sort(Dist[PosValIdx])[int(0.95 * PosValIdx.shape[0])]
-                    if i > 0:
-                        print('FPR95: ' + format(CurrentFPR95, ".2e") + ' Loss= ' + repr(running_loss)[0:6])
                 else:
                     ValError = 0
 
 
-
-                print('FPR95 changed: ' + repr(FPR95)[0:5])
-
-                # compute stats
-
-
-                if i >= len(Training_DataLoader):
-                    TestDecimation1 = 1
-                else:
-                    TestDecimation1 = TestDecimation
-
                 # test accuracy
-                extra_data = {}
-                if 'hpatch' not in ds_name:
-                    TotalTestError = evaluate_test(TestData, TestDecimation1, CnnMode, device, StepSize)
-                else:
-                    verification_err, matching_err, retrieval_err = evaluate_hpatch(TestData, TestDecimation1, CnnMode, device, StepSize, hpatch_splits, hpatch_taskdir, extra_data)
-                    TotalTestError = verification_err
+                TotalTestError = evaluate_test(TestData, CnnMode, device, StepSize)
 
                 state = {'epoch': epoch,
                          'state_dict': net.module.state_dict(),
@@ -509,41 +399,27 @@ if __name__ == '__main__':
                          'CnnMode': CnnMode,
                          'NegativeMiningMode': criterion.Mode,
                          'GeneratorMode': GeneratorMode,
-                         'Loss': criterion.Mode,
-                         'FPR95': FPR95}
+                         'Loss': criterion.Mode}
 
-                #if (ValError < LowestError):
                 if TotalTestError < LowestError:
                     LowestError = TotalTestError
-                    # LowestError = ValError
 
                     print(colored('Best error found and saved: ' + repr(TotalTestError)[0:5], 'red', attrs=['reverse', 'blink']))
-                    #print('Best error found and saved: ' + repr(LowestError)[0:5])
-                    filepath = ModelsDirName + BestFileName + '.pth'
+                    filepath = os.path.join(ModelsDirName, BestFileName + '.pth')
                     torch.save(state, filepath)
-                    save_best_model_stats(ModelsDirName, epoch, TotalTestError, TestData, extra_data)
+                    save_best_model_stats(ModelsDirName, epoch, TotalTestError, TestData)
 
 
                 str = '[%d, %5d] loss: %.3f' % (epoch, i, 100 * running_loss) + ' Val Error: ' + repr(ValError)[0:6]
 
 
-                # for DataName in TestData:
-                #   str +=' ' + DataName + ': ' + repr(TestData[DataName]['TestError'])[0:6]
-                str += ' FPR95 = ' + repr(FPR95)[0:6] + ' Mean: ' + repr(TotalTestError)[0:6]
+                str +=  'Mean: ' + repr(TotalTestError)[0:6]
                 print(str)
 
                 if True:
                     writer.add_scalar('Val Error', ValError, epoch * len(Training_DataLoader) + i)
-                    if 'hpatch' not in ds_name:
-                        writer.add_scalar('Test Error', TotalTestError, epoch * len(Training_DataLoader) + i)
-                    else:
-                        writer.add_scalar('Test Verification Error', verification_err, epoch * len(Training_DataLoader) + i)
-                        writer.add_scalar('Test Matching Error', matching_err,
-                                          epoch * len(Training_DataLoader) + i)
-                        writer.add_scalar('Test Retrieval Error', retrieval_err,
-                                          epoch * len(Training_DataLoader) + i)
+                    writer.add_scalar('Test Error', TotalTestError, epoch * len(Training_DataLoader) + i)
                     writer.add_scalar('Loss', 100 * running_loss, epoch * len(Training_DataLoader) + i)
-                    writer.add_scalar('FPR95', FPR95, epoch * len(Training_DataLoader) + i)
                     writer.add_scalar('Learning Rate', optimizer.param_groups[0]['lr'], epoch * len(Training_DataLoader) + i)
                     writer.add_text('Text', str)
                     writer.close()
