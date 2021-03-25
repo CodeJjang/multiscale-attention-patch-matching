@@ -1,1 +1,0 @@
-tensorboard --logdir=logs1 --host 0.0.0.0 --port 8089

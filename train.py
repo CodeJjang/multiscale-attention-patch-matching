@@ -145,12 +145,11 @@ def evaluate_hpatch(TestData, TestDecimation1, CnnMode, device, StepSize, splits
 
 if __name__ == '__main__':
     np.random.seed(0)
+    torch.manual_seed(0)
     device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")#"cuda:0"
     NumGpus = torch.cuda.device_count()
     torch.cuda.empty_cache()
     GPUtil.showUtilization()
-
-    # Assuming that we are on a CUDA machine, this should print a CUDA device:
     print(device)
     name = torch.cuda.get_device_name(0)
 
@@ -159,12 +158,6 @@ if __name__ == '__main__':
     Description = 'Symmetric CNN with Triplet loss, no HM'
     BestFileName = 'best_model'
     FileName = 'model_epoch_'
-    # TestDir = '/home/keller/Dropbox/multisensor/python/data/test/'
-    # TestDir = 'F:\\multisensor\\test\\'
-    # TestDir = 'data\\Vis-Nir_grid\\test\\'
-    # TrainFile = '/home/keller/Dropbox/multisensor/python/data/Vis-Nir_Train.mat'
-    # TrainFile = 'f:\\multisensor\\train\\Vis-Nir_Train.hdf5'
-    # TrainFile = './data/Vis-Nir_grid/Vis-Nir_grid_Train.hdf5'
     ds_name = 'VisNir'
     TrainFile, TestDir = load_datasets_paths(ds_name)
     TestDecimation = 1
@@ -173,30 +166,15 @@ if __name__ == '__main__':
     assert_dir(ModelsDirName)
     assert_dir(LogsDirName)
 
-    SelfSuperLoss = NTXentLoss(device=device, batch_size=0, temperature=0.5, use_cosine_similarity=True)
-
-    UseMixedPrecision = False
-    if UseMixedPrecision:
-        scaler = torch.cuda.amp.GradScaler()
-    else:
-        scaler = MyGradScaler()
+    scaler = MyGradScaler()
 
     writer = SummaryWriter(LogsDirName)
     LowestError = 1e10
 
     # ----------------------------     configuration   ---------------------------
     Augmentation = {}
-    Augmentation["HorizontalFlip"] = False
-    Augmentation["VerticalFlip"] = False
-    Augmentation["Rotate90"] = True
-    Augmentation["Test"] = {'Do': True}
-    Augmentation["RandomCrop"] = {'Do': False, 'MinDx': 0, 'MaxDx': 0.2, 'MinDy': 0, 'MaxDy': 0.2}
 
-    # default values
-    FreezeSymmetricCnn = True
-    FreezeAsymmetricCnn = True
-
-    AssymetricInitializationPhase = False
+    assymetric_init = False
 
     TestMode = False
     use_validation = False
@@ -206,146 +184,47 @@ if __name__ == '__main__':
     np.random.seed(0)
     #torch.set_deterministic(True)
 
-    if True:
-        GeneratorMode = 'Pairwise'
-        #GeneratorMode = 'SelfSupervised'
-        # CnnMode = 'Symmetric'
-        CnnMode = 'SymmetricAttention'
-        # CnnMode = 'SymmetricDecoder'
-        NegativeMiningMode = 'Random'
-        #NegativeMiningMode = 'Hardest'
-        #NegativeMiningMode = 'HardPos'
-        # criterion = OnlineTripletLoss(margin=1)
-        criterion = OnlineHardNegativeMiningTripletLoss(margin=1, Mode=NegativeMiningMode,device=device)
-        #criterion         = OnlineHaOnlineHardNegativeMiningTripletLossrdNegativeMiningTripletLoss(margin=1, Mode='HardPos', MarginRatio=0.5)
-        #criterion = OnlineHardNegativeMiningTripletLoss(margin=1, Mode='HardPos', MarginRatio=1.0/2, PosRatio=1. / 2)
-        Description = 'Symmetric Hardest'
 
-        InitializeOptimizer = True
-        UseWarmUp           = True
+    GeneratorMode = 'Pairwise'
+    CnnMode = 'SymmetricAttention'
+    NegativeMiningMode = 'Random'
+    criterion = OnlineHardNegativeMiningTripletLoss(margin=1, Mode=NegativeMiningMode,device=device)
+    Description = 'Symmetric Hardest'
 
-        StartBestModel      = False
-        UseBestScore        = False
+    InitializeOptimizer = True
+    UseWarmUp           = True
 
-        LearningRate = 1e-1#0.1
+    StartBestModel      = False
+    UseBestScore        = False
 
-        weight_decay = 0#1e-5
-        DropoutP = 0.5
+    LearningRate = 1e-1
 
-        torch.manual_seed(0)
-        np.random.seed(0)
+    weight_decay = 0
+    DropoutP = 0.5
 
-        OuterBatchSize = 4*12
-        InnerBatchSize = 2*12
-        Augmentation["Test"] = {'Do': False}
-        Augmentation["HorizontalFlip"] = True
-        Augmentation["Rotate90"] = True
-        # Augmentation["RandomCrop"] = {'Do': True, 'MinDx': 0, 'MaxDx': 0.2, 'MinDy': 0, 'MaxDy': 0.2}
+    OuterBatchSize = 4*12
+    InnerBatchSize = 2*12
+    Augmentation["Test"] = {'Do': False}
+    Augmentation["HorizontalFlip"] = True
+    Augmentation["Rotate90"] = True
+    Augmentation["VerticalFlip"] = False
+    Augmentation["HorizontalFlip"] = True
+    Augmentation["Test"] = False
 
-        PrintStep = 100
-        # PrintStep = 50
-        # PrintStep = 20
-        FreezeSymmetricCnn  = False
-        FreezeSymmetricBlock = False
+    PrintStep = 100
+    FreezeSymmetricCnn  = False
+    FreezeSymmetricBlock = False
 
-        FreezeAsymmetricCnn = True
+    FreezeAsymmetricCnn = True
 
 
 
 
-        StartBestModel = False
-        UseBestScore   = False
+    StartBestModel = False
+    UseBestScore   = False
 
 
 
-    if False:
-        GeneratorMode = 'Pairwise'
-        CnnMode = 'Asymmetric'
-        CnnMode = 'AsymmetricAttention'
-        # CnnMode = 'AsymmetricDecoder'
-
-        NegativeMiningMode = 'Random'
-        #NegativeMiningMode = 'Hardest'
-        criterion = OnlineHardNegativeMiningTripletLoss(margin=1, Mode=NegativeMiningMode,device=device)
-        # criterion = OnlineHardNegativeMiningTripletLoss(margin=1, Mode='HardPos', MarginRatio=1.0/2, PosRatio=1. / 2)
-
-        InitializeOptimizer = True
-        UseWarmUp           = True
-
-        StartBestModel      = False
-        UseBestScore        = False
-
-        FreezeSymmetricCnn   = True
-        FreezeAsymmetricCnn  = False
-
-        LearningRate = 1e-1
-        OuterBatchSize = 2 * 12
-        InnerBatchSize = 2 * 12
-
-
-
-        weight_decay = 0
-        DropoutP = 0.5
-
-        Augmentation["Test"] = {'Do': False}
-        Augmentation["HorizontalFlip"] = True
-        Augmentation["VerticalFlip"] = True
-        Augmentation["Rotate90"] = True
-        Augmentation["RandomCrop"] = {'Do': True, 'MinDx': 0, 'MaxDx': 0.2, 'MinDy': 0, 'MaxDy': 0.2}
-
-        #AssymetricInitializationPhase = True
-        Description = 'Asymmetric'
-
-
-
-
-    if False:
-        GeneratorMode = 'Pairwise'
-        # CnnMode            = 'HybridRot'
-        CnnMode = 'Hybrid'
-        CnnMode = 'AttenHybrid'
-
-        NegativeMiningMode = 'Random'
-        #NegativeMiningMode = 'Hardest'
-
-        criterion = OnlineHardNegativeMiningTripletLoss(margin=1, Mode=NegativeMiningMode,device=device)
-        #criterion = OnlineHardNegativeMiningTripletLoss(margin=1, Mode="Hardest",device=device)
-        #criterion        = OnlineHardNegativeMiningTripletLoss(margin=1, Mode='HardPos', MarginRatio=1.0/4, PosRatio=1./4)
-        #HardestCriterion = OnlineHardNegativeMiningTripletLoss(margin=1, Mode='Hardest')
-
-        #criterion = OnlineHardNegativeMiningTripletLoss(margin=1, Mode='HardPos', MarginRatio=1.0 / 2, PosRatio=1. / 2,device=device)
-
-        PairwiseLoss      = PairwiseLoss()
-
-        InitializeOptimizer = True
-        UseWarmUp           = True
-
-        StartBestModel = False
-        UseBestScore = False
-
-        LearningRate = 1e-1
-        OuterBatchSize = 2*12
-        InnerBatchSize = 2*12
-
-
-        DropoutP = 0.5
-        weight_decay= 0#1e-5
-
-        TestMode = False
-        TestDecimation = 10
-
-
-
-        FreezeSymmetricCnn  = False
-        FreezeAsymmetricCnn = False
-
-        AssymetricInitializationPhase = False
-
-        Augmentation["Test"] = {'Do': False}
-        Augmentation["HorizontalFlip"] = True
-        Augmentation["VerticalFlip"] = True
-        Augmentation["Rotate90"] = True
-        Augmentation["RandomCrop"] = {'Do': True, 'MinDx': 0, 'MaxDx': 0.2, 'MinDy': 0, 'MaxDy': 0.2}
 
 
 
@@ -378,35 +257,12 @@ if __name__ == '__main__':
 
     # define generators
     Training_Dataset = DatasetPairwiseTriplets(TrainingSetData, TrainingSetLabels, InnerBatchSize, Augmentation, GeneratorMode)
-    # Training_DataLoader = data.DataLoader(Training_Dataset, batch_size=OuterBatchSize, shuffle=True,num_workers=8,pin_memory=True)
     Training_DataLoader = MultiEpochsDataLoader(Training_Dataset, batch_size=OuterBatchSize, shuffle=True,
                                                 num_workers=8, pin_memory=True)
 
 
+    TestData = load_test_datasets(TestDir)
 
-    if 'hpatches' not in ds_name:
-        TestData = load_test_datasets(TestDir)
-    else:
-        # TestData = load_hpatches_dataset(TestDir)
-        print('Loading hpatchs...')
-        TestData = {}
-        with h5py.File(TestDir, 'r') as handle:
-            for seq_name in handle.keys():
-                hpatch = hpatch_sequence()
-                seq_data = handle.get(seq_name)
-                for t in seq_data.keys():
-                    setattr(hpatch, t, torch.from_numpy(np.array(seq_data.get(t), np.float32)))
-                TestData[seq_name] = hpatch
-        hpatch_taskdir = "D:\\multisensor\\datasets\\hpatches-benchmark\\tasks"
-        with open(os.path.join(hpatch_taskdir, "splits", "splits.json")) as f:
-            hpatch_splits = json.load(f)
-
-    # ------------------------------------------------------------------------------------------
-
-
-
-
-    # -------------------------    loading previous results   ------------------------
     net = MetricLearningCnn(CnnMode,DropoutP)
     optimizer = torch.optim.Adam(net.parameters(), lr=LearningRate)
 
@@ -424,7 +280,7 @@ if __name__ == '__main__':
     # ------------------------------------------------------------------------------------------
 
     # -------------------- Initialization -----------------------
-    if AssymetricInitializationPhase:
+    if assymetric_init:
         net.netAS1 = copy.deepcopy(net.module.netS)
         net.netAS2 = copy.deepcopy(net.module.netS)
 
@@ -572,48 +428,17 @@ if __name__ == '__main__':
             pos2 = np.reshape(pos2, (pos2.shape[0] * pos2.shape[1], 1, pos2.shape[2], pos2.shape[3]), order='F')
 
 
+            pos1, pos2 = pos1.to(device), pos2.to(device)
 
-            if (CnnMode == 'Asymmetric') or (CnnMode == 'Symmetric') or \
-                (CnnMode == 'SymmetricAttention') or (CnnMode == 'AsymmetricAttention') \
-                    or (CnnMode == 'SymmetricDecoder') or (CnnMode == 'AsymmetricDecoder'):
+            Embed = net(pos1, pos2,DropoutP=DropoutP)
 
-                pos1, pos2 = pos1.to(device), pos2.to(device)
-
-                with torch.cuda.amp.autocast(enabled=UseMixedPrecision):
-                    Embed = net(pos1, pos2,DropoutP=DropoutP)
-
-                    if GeneratorMode == 'SelfSupervised':
-                        loss = SelfSuperLoss(Embed['Emb1'],Embed['Emb2'])
-                    else:
-                        loss = criterion(Embed['Emb1'], Embed['Emb2']) + criterion(Embed['Emb2'], Embed['Emb1'])
+            loss = criterion(Embed['Emb1'], Embed['Emb2']) + criterion(Embed['Emb2'], Embed['Emb1'])
 
 
-            if (CnnMode == 'Hybrid') or (CnnMode == 'AttenHybrid'):
-                pos1, pos2 = pos1.to(device), pos2.to(device)
-
-                # GPUtil.showUtilization()
-                with torch.cuda.amp.autocast(enabled=UseMixedPrecision):
-                    Embed = net(pos1, pos2,DropoutP=DropoutP)
-                    loss = criterion(Embed['Hybrid1'], Embed['Hybrid2']) + criterion(Embed['Hybrid2'],Embed['Hybrid1'])
-                    loss += criterion(Embed['EmbSym1'], Embed['EmbSym2']) + criterion(Embed['EmbSym2'], Embed['EmbSym1'])
-                #loss +=criterion(Embed['EmbAsym1'], Embed['EmbAsym2'])+criterion(Embed['EmbAsym2'], Embed['EmbAsym1'])
-
-
-
-            # backward + optimize
-            #loss.backward()
             scaler.scale(loss).backward()
-
             clipping_value = 1
-            #torch.nn.utils.clip_grad_norm_(net.parameters(), clipping_value)
-
-            #optimizer.step()  # Now we can do an optimizer step
             scaler.step(optimizer)
-
-            # Updates the scale for next iteration
             scaler.update()
-
-
 
             running_loss     += loss.item()
 
