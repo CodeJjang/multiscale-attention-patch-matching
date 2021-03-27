@@ -30,15 +30,3 @@ python train.py --dataset-name=visnir --dataset-path=<visnir_downloaded_path>
 ```
 
 For further configurations run `-h` with the above command.
-
-## Citation
-```
-@misc{moreshet2021paying,
-      title={Paying Attention to Multiscale Feature Maps in Multimodal Image Matching}, 
-      author={Aviad Moreshet and Yosi Keller},
-      year={2021},
-      eprint={2103.11247},
-      archivePrefix={arXiv},
-      primaryClass={cs.CV}
-}
-```
