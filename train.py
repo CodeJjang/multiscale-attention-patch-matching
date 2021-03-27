@@ -36,25 +36,25 @@ def assert_dir(dir_path):
 def load_datasets_paths(ds_name, ds_path):
     if ds_name == 'visnir':
         test_dir = os.path.join(ds_path, 'test\\')
-        train_file = os.path.join(ds_path, 'train\\Vis-Nir_Train.hdf5')
+        train_file = os.path.join(ds_path, 'train\\train.hdf5')
     elif ds_name == 'cuhk':
-        test_dir = os.path.join(ds_path, 'cuhk\\test\\')
-        train_file = os.path.join(ds_path, 'cuhk\\train.hdf5')
+        test_dir = os.path.join(ds_path, 'en_etal\\cuhk\\test\\')
+        train_file = os.path.join(ds_path, 'en_etal\\cuhk\\train.hdf5')
     elif ds_name == 'vedai':
-        test_dir = os.path.join(ds_path, 'vedai\\test\\')
-        train_file = os.path.join(ds_path, 'vedai\\train.hdf5')
+        test_dir = os.path.join(ds_path, 'en_etal\\vedai\\test\\')
+        train_file = os.path.join(ds_path, 'en_etal\\vedai\\train.hdf5')
     elif ds_name == 'visnir-grid':
-        test_dir = os.path.join(ds_path, 'Vis-Nir_grid\\test\\')
-        train_file = os.path.join(ds_path, 'Vis-Nir_grid\\train.hdf5')
-    elif ds_name == 'brown-liberty':
-        test_dir = os.path.join(ds_path, 'brown\\patchdata\\test_yos_not\\')
-        train_file = os.path.join(ds_path, 'brown\\patchdata\\liberty_full_for_multisensor.hdf5')
-    elif ds_name == 'brown-notredame':
-        test_dir = os.path.join(ds_path, 'brown\\patchdata\\test_lib_yos\\')
-        train_file = os.path.join(ds_path, 'brown\\patchdata\\notredame_full_for_multisensor.hdf5')
-    elif ds_name == 'brown-yosemite':
-        test_dir = os.path.join(ds_path, 'brown\\patchdata\\test_lib_not\\')
-        train_file = os.path.join(ds_path, 'brown\\patchdata\\yosemite_full_for_multisensor.hdf5')
+        test_dir = os.path.join(ds_path, 'en_etal\\visnir\\test\\')
+        train_file = os.path.join(ds_path, 'en_etal\\visnir\\train.hdf5')
+    elif ds_name == 'ubc-liberty':
+        test_dir = os.path.join(ds_path, 'ubc\\patchdata\\test_yos_not\\')
+        train_file = os.path.join(ds_path, 'ubc\\patchdata\\liberty_full.hdf5')
+    elif ds_name == 'ubc-notredame':
+        test_dir = os.path.join(ds_path, 'ubc\\patchdata\\test_lib_yos\\')
+        train_file = os.path.join(ds_path, 'ubc\\patchdata\\notredame_full.hdf5')
+    elif ds_name == 'ubc-yosemite':
+        test_dir = os.path.join(ds_path, 'ubc\\patchdata\\test_lib_not\\')
+        train_file = os.path.join(ds_path, 'ubc\\patchdata\\yosemite_full.hdf5')
     return train_file, test_dir
 
 

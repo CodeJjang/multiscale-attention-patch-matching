@@ -10,3 +10,4 @@ data/
 detection/
 *.rar
 .idea/
+artifacts/
