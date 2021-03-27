@@ -1,5 +1,5 @@
 # Paying Attention to Multiscale Feature Maps in Multimodal Image Matching
-#### [Paper](https://arxiv.org/abs/2103.11247)
+
 ![teaser architecture fig](figures/teaser.png)
 
 We propose an attention-based approach for multimodal image patch matching using a Transformer encoder attending to the feature maps of a multiscale Siamese CNN. Our encoder is shown to efficiently aggregate multiscale image embeddings while emphasizing task-specific appearance-invariant image cues. We also introduce an attention-residual architecture, using a residual connection bypassing the encoder. This additional learning signal facilitates end-to-end training from scratch.
