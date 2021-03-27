@@ -2,7 +2,7 @@ import torch
 import numpy as np
 import glob
 import os
-from read_matlab_imdb import read_matlab_imdb
+from read_data import read_matlab_imdb
 import h5py
 
 

@@ -18,7 +18,7 @@ from my_classes import imshow, ShowRowImages, ShowTwoRowImages
 from my_classes import DatasetPairwiseTriplets, FPR95Accuracy
 from my_classes import SingleNet, MetricLearningCnn, EvaluateNet, SiamesePairwiseSoftmax, NormalizeImages
 from losses import ContrastiveLoss, TripletLoss, OnlineTripletLoss, OnlineHardNegativeMiningTripletLoss, InnerProduct
-from read_matlab_imdb import read_matlab_imdb
+from util.read_hdf5_data import read_hdf5_data
 
 import warnings
 warnings.filterwarnings("ignore", message="UserWarning: albumentations.augmentations.transforms.RandomResizedCrop")

@@ -30,10 +30,9 @@ from network.losses import ContrastiveLoss, TripletLoss, OnlineTripletLoss, Onli
 from network.losses import InnerProduct, FindFprTrainingSet, FPRLoss, PairwiseLoss, HardTrainingLoss
 from network.losses import Compute_FPR_HardNegatives, ComputeFPR
 from util.warmup_scheduler import GradualWarmupSchedulerV2
-from util.read_matlab_imdb import read_matlab_imdb
+from util.read_hdf5_data import read_hdf5_data
 from util.utils import LoadModel,MultiEpochsDataLoader,MyGradScaler, save_best_model_stats
 from network.nt_xent import NTXentLoss
-from hpatches.utils.load_dataset import load_dataset as load_hpatches_dataset
 import h5py
 import warnings
 import train

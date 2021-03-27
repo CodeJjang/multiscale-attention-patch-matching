@@ -24,7 +24,7 @@ from network.losses import ContrastiveLoss, TripletLoss, OnlineTripletLoss, Onli
 from network.losses import InnerProduct, FindFprTrainingSet, FPRLoss, PairwiseLoss, HardTrainingLoss
 from network.losses import Compute_FPR_HardNegatives, ComputeFPR
 from util.warmup_scheduler import GradualWarmupSchedulerV2
-from util.read_matlab_imdb import read_matlab_imdb
+from util.read_hdf5_data import read_hdf5_data
 from util.utils import LoadModel,MultiEpochsDataLoader,MyGradScaler, save_best_model_stats
 from network.nt_xent import NTXentLoss
 import warnings
@@ -66,7 +66,7 @@ def load_test_datasets(TestDir):
         path, DatasetName = os.path.split(File)
         DatasetName = os.path.splitext(DatasetName)[0]
 
-        Data = read_matlab_imdb(File)
+        Data = read_hdf5_data(File)
 
         x = Data['Data'].astype(np.float32)
         TestLabels = torch.from_numpy(np.squeeze(Data['Labels']))
@@ -189,7 +189,7 @@ if __name__ == '__main__':
 
 
     # ----------------------------- read data----------------------------------------------
-    Data = read_matlab_imdb(TrainFile)
+    Data = read_hdf5_data(TrainFile)
     TrainingSetData = Data['Data']
     TrainingSetLabels = np.squeeze(Data['Labels'])
     TrainingSetSet = np.squeeze(Data['Set'])
