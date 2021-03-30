@@ -47,14 +47,14 @@ def load_datasets_paths(ds_name, ds_path):
         test_dir = os.path.join(ds_path, 'en_etal\\visnir\\test\\')
         train_file = os.path.join(ds_path, 'en_etal\\visnir\\train.hdf5')
     elif ds_name == 'ubc-liberty':
-        test_dir = os.path.join(ds_path, 'ubc\\patchdata\\test_yos_not\\')
-        train_file = os.path.join(ds_path, 'ubc\\patchdata\\liberty_full.hdf5')
+        test_dir = os.path.join(ds_path, 'ubc\\test_yos_not\\')
+        train_file = os.path.join(ds_path, 'ubc\\liberty_full.hdf5')
     elif ds_name == 'ubc-notredame':
-        test_dir = os.path.join(ds_path, 'ubc\\patchdata\\test_lib_yos\\')
-        train_file = os.path.join(ds_path, 'ubc\\patchdata\\notredame_full.hdf5')
+        test_dir = os.path.join(ds_path, 'ubc\\test_lib_yos\\')
+        train_file = os.path.join(ds_path, 'ubc\\notredame_full.hdf5')
     elif ds_name == 'ubc-yosemite':
-        test_dir = os.path.join(ds_path, 'ubc\\patchdata\\test_lib_not\\')
-        train_file = os.path.join(ds_path, 'ubc\\patchdata\\yosemite_full.hdf5')
+        test_dir = os.path.join(ds_path, 'ubc\\test_lib_not\\')
+        train_file = os.path.join(ds_path, 'ubc\\yosemite_full.hdf5')
     return train_file, test_dir
 
 
