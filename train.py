@@ -1,37 +1,32 @@
-import torch
-import torchvision
-import matplotlib.pyplot as plt
-from termcolor import colored
-import numpy as np
+import argparse
 import glob
 import os
-import copy
-from tensorboardX import SummaryWriter
-from torch.optim.lr_scheduler import ReduceLROnPlateau,StepLR
-from torch.utils import data
-import torch.optim as optim
-import torch.nn as nn
-from tqdm import tqdm
-import GPUtil
-import json
-import math
-import argparse
-from pathlib import Path
-from network.my_classes import imshow, ShowRowImages, ShowTwoRowImages, EvaluateDualNets, EvaluateSingleNet
-from network.my_classes import FPR95Accuracy,SingleNet, MetricLearningCnn, EvaluateNet,EvaluateDualNets
-from network.generator import DatasetPairwiseTriplets,NormalizeImages
-from network.losses import ContrastiveLoss, TripletLoss, OnlineTripletLoss, OnlineHardNegativeMiningTripletLoss
-from network.losses import InnerProduct, FindFprTrainingSet, FPRLoss, PairwiseLoss, HardTrainingLoss
-from network.losses import Compute_FPR_HardNegatives, ComputeFPR
-from util.warmup_scheduler import GradualWarmupSchedulerV2
-from util.read_hdf5_data import read_hdf5_data
-from util.utils import LoadModel,MultiEpochsDataLoader,MyGradScaler, save_best_model_stats
-from network.nt_xent import NTXentLoss
 import warnings
+from pathlib import Path
+
+import GPUtil
+import numpy as np
+import torch
+import torch.nn as nn
+from tensorboardX import SummaryWriter
+from termcolor import colored
+from torch.optim.lr_scheduler import ReduceLROnPlateau, StepLR
+from tqdm import tqdm
+
+from datasets.DatasetPairwiseTriplets import DatasetPairwiseTriplets
+from networks.losses import OnlineHardNegativeMiningTripletLoss
+from networks.PatchMatchingNetwork import PatchMatchingNetwork
+from util.read_hdf5_data import read_hdf5_data
+from util.utils import load_model, MultiEpochsDataLoader, MyGradScaler, save_best_model_stats, FPR95Accuracy, \
+    normalize_image, evaluate_network
+from util.warmup_scheduler import GradualWarmupSchedulerV2
+
 warnings.filterwarnings("ignore", message="UserWarning: albumentations.augmentations.transforms.RandomResizedCrop")
+
 
 def assert_dir(dir_path):
     Path(dir_path).mkdir(parents=True, exist_ok=True)
+
 
 def load_datasets_paths(ds_name, ds_path):
     if ds_name == 'visnir':
@@ -59,7 +54,6 @@ def load_datasets_paths(ds_name, ds_path):
 
 
 def load_test_datasets(TestDir):
-    # Load all TEST datasets
     FileList = glob.glob(TestDir + "*.hdf5")
     TestData = dict()
     for File in FileList:
@@ -75,10 +69,8 @@ def load_test_datasets(TestDir):
         x[:, :, :, :, 0] -= x[:, :, :, :, 0].mean()
         x[:, :, :, :, 1] -= x[:, :, :, :, 1].mean()
 
-        x = NormalizeImages(x)
+        x = normalize_image(x)
         x = torch.from_numpy(x)
-
-        # TestLabels = torch.from_numpy(2 - Data['testLabels'])
 
         TestData[DatasetName] = dict()
         TestData[DatasetName]['Data'] = x
@@ -87,12 +79,12 @@ def load_test_datasets(TestDir):
     return TestData
 
 
-def evaluate_test(TestData, CnnMode, device, StepSize):
+def evaluate_test(TestData, device, StepSize):
     NoSamples = 0
     TotalTestError = 0
     for DataName in TestData:
-        EmbTest = EvaluateDualNets(net, TestData[DataName]['Data'][:, :, :, :, 0],
-                                   TestData[DataName]['Data'][:, :, :, :, 1], CnnMode, device,
+        EmbTest = evaluate_network(net, TestData[DataName]['Data'][:, :, :, :, 0],
+                                   TestData[DataName]['Data'][:, :, :, :, 1], device,
                                    StepSize)
 
         Dist = np.power(EmbTest['Emb1'] - EmbTest['Emb2'], 2).sum(1)
@@ -109,9 +101,10 @@ def parse_args():
     parser = argparse.ArgumentParser(description='Train models for multimodal patch matching.')
     parser.add_argument('--epochs', type=int, default=100, help='epochs')
     parser.add_argument('--artifacts', default='./artifacts', help='artifacts path')
-    parser.add_argument('--exp-name', default='symmetric_enc_transformer_test_3', help='experiment name')
+    parser.add_argument('--exp-name', default='symmetric_enc_transformer_test_4', help='experiment name')
     parser.add_argument('--evaluate-every', type=int, default=50, help='evaluate network and print steps')
-    parser.add_argument('--skip-validation', type=bool, const=True, default=False, help='whether to skip validation evaluation', nargs='?')
+    parser.add_argument('--skip-validation', type=bool, const=True, default=False,
+                        help='whether to skip validation evaluation', nargs='?')
     parser.add_argument('--continue-from-checkpoint', type=bool, const=True, default=False,
                         nargs='?', help='whether to continue training from checkpoint')
     parser.add_argument('--continue-from-best-score', type=bool, const=True, default=False,
@@ -123,7 +116,6 @@ def parse_args():
     parser.add_argument('--lr', type=float, default=1e-1, help='learning rate')
     parser.add_argument('--dropout', type=float, default=0.5, help='dropout')
     parser.add_argument('--weight-decay', type=float, default=0, help='weight decay')
-    parser.add_argument('--cnn-mode', default='SymmetricAttention', help='cnn mode')
     parser.add_argument('--dataset-name', default='visnir', help='dataset name')
     parser.add_argument('--dataset-path', default='visnir', help='dataset name')
     return parser.parse_args()
@@ -161,17 +153,16 @@ if __name__ == '__main__':
     skip_validation = args.skip_validation
 
     GeneratorMode = 'Pairwise'
-    CnnMode = args.cnn_mode
     NegativeMiningMode = 'Random'
-    criterion = OnlineHardNegativeMiningTripletLoss(margin=1, Mode=NegativeMiningMode,device=device)
+    criterion = OnlineHardNegativeMiningTripletLoss(margin=1, mode=NegativeMiningMode, device=device)
 
     InitializeOptimizer = True
-    UseWarmUp           = True
+    UseWarmUp = True
 
     LearningRate = args.lr
 
     weight_decay = args.weight_decay
-    DropoutP = args.dropout
+    dropout = args.dropout
 
     OuterBatchSize = args.batch_size
     InnerBatchSize = args.inner_batch_size
@@ -185,8 +176,7 @@ if __name__ == '__main__':
     PrintStep = args.evaluate_every
 
     StartBestModel = args.continue_from_best_model
-    UseBestScore   = args.continue_from_best_score
-
+    UseBestScore = args.continue_from_best_score
 
     # ----------------------------- read data----------------------------------------------
     Data = read_hdf5_data(TrainFile)
@@ -194,7 +184,6 @@ if __name__ == '__main__':
     TrainingSetLabels = np.squeeze(Data['Labels'])
     TrainingSetSet = np.squeeze(Data['Set'])
     del Data
-
 
     ValSetData = []
     TrainIdx = np.squeeze(np.asarray(np.where(TrainingSetSet == 1)))
@@ -207,7 +196,7 @@ if __name__ == '__main__':
         ValSetData = TrainingSetData[ValIdx, :, :, :].astype(np.float32)
         ValSetData[:, :, :, :, 0] -= ValSetData[:, :, :, :, 0].mean()
         ValSetData[:, :, :, :, 1] -= ValSetData[:, :, :, :, 1].mean()
-        ValSetData = torch.from_numpy(NormalizeImages(ValSetData))
+        ValSetData = torch.from_numpy(normalize_image(ValSetData))
 
     # TRAINING data
     TrainingSetData = np.squeeze(TrainingSetData[TrainIdx,])
@@ -215,22 +204,25 @@ if __name__ == '__main__':
     TrainingSetLabels = TrainingSetLabels[TrainIdx]
 
     # define generators
-    Training_Dataset = DatasetPairwiseTriplets(TrainingSetData, TrainingSetLabels, InnerBatchSize, Augmentation, GeneratorMode)
+    Training_Dataset = DatasetPairwiseTriplets(TrainingSetData, TrainingSetLabels, InnerBatchSize, Augmentation,
+                                               GeneratorMode)
     Training_DataLoader = MultiEpochsDataLoader(Training_Dataset, batch_size=OuterBatchSize, shuffle=True,
                                                 num_workers=8, pin_memory=True)
 
-
     TestData = load_test_datasets(TestDir)
 
-    net = MetricLearningCnn(CnnMode,DropoutP)
+    net = PatchMatchingNetwork()
     optimizer = torch.optim.Adam(net.parameters(), lr=LearningRate)
-
 
     StartEpoch = 0
     LowestError = 1e5
     if args.continue_from_checkpoint:
-        net,optimizer,LowestError,StartEpoch,scheduler,loaded_negative_mining_mode = LoadModel(net, StartBestModel, ModelsDirName, BestFileName, UseBestScore, device)
-
+        net, optimizer, LowestError, StartEpoch, scheduler, loaded_negative_mining_mode = load_model(net,
+                                                                                                     StartBestModel,
+                                                                                                     ModelsDirName,
+                                                                                                     BestFileName,
+                                                                                                     UseBestScore,
+                                                                                                     device)
 
     if NumGpus > 1:
         print("Let's use", torch.cuda.device_count(), "GPUs!")
@@ -238,31 +230,24 @@ if __name__ == '__main__':
     net.to(device)
 
     if InitializeOptimizer:
-
         optimizer = torch.optim.Adam(
-            [{'params': filter(lambda p: p.requires_grad == True, net.parameters()),'lr': LearningRate, 'weight_decay': weight_decay},
-             {'params': filter(lambda p: p.requires_grad == False, net.parameters()),'lr': 0, 'weight_decay': 0}],
+            [{'params': filter(lambda p: p.requires_grad == True, net.parameters()), 'lr': LearningRate,
+              'weight_decay': weight_decay},
+             {'params': filter(lambda p: p.requires_grad == False, net.parameters()), 'lr': 0, 'weight_decay': 0}],
             lr=0, weight_decay=0.00)
-
 
     ########################################################################
     # Train the network
     scheduler = ReduceLROnPlateau(optimizer, mode='min', factor=0.1, patience=3, verbose=True)
 
-
     if UseWarmUp:
         WarmUpEpochs = 8
         scheduler_warmup = GradualWarmupSchedulerV2(optimizer, multiplier=1, total_epoch=WarmUpEpochs,
-                                                    after_scheduler= StepLR(optimizer, step_size=3, gamma=0.1))
+                                                    after_scheduler=StepLR(optimizer, step_size=3, gamma=0.1))
     else:
         WarmUpEpochs = 0
 
-    InnerProductLoss = InnerProduct()
     CeLoss = nn.CrossEntropyLoss()
-
-
-    print(CnnMode + ' training\n')
-
 
     for epoch in range(StartEpoch, 1000):  # loop over the dataset multiple times
 
@@ -270,11 +255,10 @@ if __name__ == '__main__':
         running_loss_neg = 0
         optimizer.zero_grad()
 
-
-        #warmup
+        # warmup
         if InitializeOptimizer and (epoch - StartEpoch < WarmUpEpochs) and UseWarmUp:
             print(colored('\n Warmup step #' + repr(epoch - StartEpoch), 'green', attrs=['reverse', 'blink']))
-            #print('\n Warmup step #' + repr(epoch - StartEpoch))
+            # print('\n Warmup step #' + repr(epoch - StartEpoch))
             scheduler_warmup.step()
         else:
             if epoch > StartEpoch:
@@ -287,21 +271,22 @@ if __name__ == '__main__':
                     # scheduler.step(ValError)
                     scheduler.step(TotalTestError)
         running_loss = 0
-        #scheduler_warmup.step(epoch-StartEpoch,running_loss)
+        # scheduler_warmup.step(epoch-StartEpoch,running_loss)
 
         str = '\n LR: '
         for param_group in optimizer.param_groups:
             str += repr(param_group['lr']) + ' '
         print(colored(str, 'blue', attrs=['reverse', 'blink']))
 
-        print('NegativeMiningMode = ' + criterion.Mode)
-        print('CnnMode = '+CnnMode + '\nGeneratorMode = ' + GeneratorMode)
+        print('NegativeMiningMode = ' + criterion.mode)
+        print('GeneratorMode = ' + GeneratorMode)
 
-        finished_warmup = (criterion.Mode == 'Random') and (optimizer.param_groups[0]['lr'] <= (LearningRate/1e3 + 1e-8)) \
-                and (epoch-StartEpoch>WarmUpEpochs)
+        finished_warmup = (criterion.mode == 'Random') and (
+                    optimizer.param_groups[0]['lr'] <= (LearningRate / 1e3 + 1e-8)) \
+                          and (epoch - StartEpoch > WarmUpEpochs)
         if finished_warmup:
             print(colored('Switching Random->Hardest', 'green', attrs=['reverse', 'blink']))
-            criterion = OnlineHardNegativeMiningTripletLoss(margin=1, Mode = 'Hardest',device=device)
+            criterion = OnlineHardNegativeMiningTripletLoss(margin=1, mode='Hardest', device=device)
 
             LearningRate = 1e-1
             optimizer = torch.optim.Adam(
@@ -311,17 +296,15 @@ if __name__ == '__main__':
                   'weight_decay': 0}],
                 lr=0, weight_decay=0.00)
 
-            #start with warmup
+            # start with warmup
             scheduler_warmup = GradualWarmupSchedulerV2(optimizer, multiplier=1, total_epoch=WarmUpEpochs)
             StartEpoch = epoch
 
             if type(scheduler).__name__ == 'StepLR':
-                scheduler =  StepLR(optimizer, step_size=10, gamma=0.1)
+                scheduler = StepLR(optimizer, step_size=10, gamma=0.1)
 
             if type(scheduler).__name__ == 'ReduceLROnPlateau':
                 scheduler = ReduceLROnPlateau(optimizer, mode='min', factor=0.1, patience=3, verbose=True)
-
-
 
         bar = tqdm(Training_DataLoader, 0, leave=False)
         for i, Data in enumerate(bar):
@@ -338,40 +321,36 @@ if __name__ == '__main__':
             pos1 = np.reshape(pos1, (pos1.shape[0] * pos1.shape[1], 1, pos1.shape[2], pos1.shape[3]), order='F')
             pos2 = np.reshape(pos2, (pos2.shape[0] * pos2.shape[1], 1, pos2.shape[2], pos2.shape[3]), order='F')
 
-
             pos1, pos2 = pos1.to(device), pos2.to(device)
 
-            Embed = net(pos1, pos2,DropoutP=DropoutP)
+            Embed = net(pos1, pos2, dropout=dropout)
 
             loss = criterion(Embed['Emb1'], Embed['Emb2']) + criterion(Embed['Emb2'], Embed['Emb1'])
-
 
             scaler.scale(loss).backward()
             clipping_value = 1
             scaler.step(optimizer)
             scaler.update()
 
-            running_loss     += loss.item()
+            running_loss += loss.item()
 
             SchedularUpadteInterval = 200
-            if (i % SchedularUpadteInterval == 0) &(i>0):
-                print('running_loss: '+repr(running_loss/i)[0:8])
-
+            if (i % SchedularUpadteInterval == 0) & (i > 0):
+                print('running_loss: ' + repr(running_loss / i)[0:8])
 
             if (((i % PrintStep == 0) or (i * InnerBatchSize >= len(Training_DataLoader) - 1)) and (i > 0)) or TestMode:
 
                 if i > 0:
-                    running_loss     /=i
+                    running_loss /= i
                     running_loss_neg /= i
                     running_loss_pos /= i
-
 
                 # val accuracy
                 StepSize = 800
                 net.eval()
 
                 if len(ValSetData) > 0:
-                    Emb = EvaluateDualNets(net, ValSetData[:, :, :, :, 0], ValSetData[:, :, :, :, 1],CnnMode,device, StepSize)
+                    Emb = evaluate_network(net, ValSetData[:, :, :, :, 0], ValSetData[:, :, :, :, 1], device, StepSize)
 
                     Dist = np.power(Emb['Emb1'] - Emb['Emb2'], 2).sum(1)
                     ValError = FPR95Accuracy(Dist, ValSetLabels) * 100
@@ -379,51 +358,47 @@ if __name__ == '__main__':
                 else:
                     ValError = 0
 
-
                 # test accuracy
-                TotalTestError = evaluate_test(TestData, CnnMode, device, StepSize)
+                TotalTestError = evaluate_test(TestData, device, StepSize)
 
                 state = {'epoch': epoch,
                          'state_dict': net.module.state_dict(),
                          'optimizer_name': type(optimizer).__name__,
-                         #'optimizer': optimizer.state_dict(),
+                         # 'optimizer': optimizer.state_dict(),
                          'optimizer': optimizer,
                          'scheduler_name': type(scheduler).__name__,
-                         #'scheduler': scheduler.state_dict(),
+                         # 'scheduler': scheduler.state_dict(),
                          'scheduler': scheduler,
                          'Description': Description,
                          'LowestError': LowestError,
                          'OuterBatchSize': OuterBatchSize,
                          'InnerBatchSize': InnerBatchSize,
-                         'Mode': net.module.Mode,
-                         'CnnMode': CnnMode,
-                         'NegativeMiningMode': criterion.Mode,
+                         'NegativeMiningMode': criterion.mode,
                          'GeneratorMode': GeneratorMode,
-                         'Loss': criterion.Mode}
+                         'Loss': criterion.mode}
 
                 if TotalTestError < LowestError:
                     LowestError = TotalTestError
 
-                    print(colored('Best error found and saved: ' + repr(TotalTestError)[0:5], 'red', attrs=['reverse', 'blink']))
+                    print(colored('Best error found and saved: ' + repr(TotalTestError)[0:5], 'red',
+                                  attrs=['reverse', 'blink']))
                     filepath = os.path.join(ModelsDirName, BestFileName + '.pth')
                     torch.save(state, filepath)
                     save_best_model_stats(ModelsDirName, epoch, TotalTestError, TestData)
 
-
                 str = '[%d, %5d] loss: %.3f' % (epoch, i, 100 * running_loss) + ' Val Error: ' + repr(ValError)[0:6]
 
-
-                str +=  'Mean: ' + repr(TotalTestError)[0:6]
+                str += 'Mean: ' + repr(TotalTestError)[0:6]
                 print(str)
 
                 if True:
                     writer.add_scalar('Val Error', ValError, epoch * len(Training_DataLoader) + i)
                     writer.add_scalar('Test Error', TotalTestError, epoch * len(Training_DataLoader) + i)
                     writer.add_scalar('Loss', 100 * running_loss, epoch * len(Training_DataLoader) + i)
-                    writer.add_scalar('Learning Rate', optimizer.param_groups[0]['lr'], epoch * len(Training_DataLoader) + i)
+                    writer.add_scalar('Learning Rate', optimizer.param_groups[0]['lr'],
+                                      epoch * len(Training_DataLoader) + i)
                     writer.add_text('Text', str)
                     writer.close()
-
 
                 # save epoch
                 filepath = ModelsDirName + FileName + repr(epoch) + '.pth'

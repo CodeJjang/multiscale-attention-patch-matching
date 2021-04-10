@@ -1,42 +1,41 @@
+import glob
+import json
+import os
+
 import numpy as np
 import torch
-import glob
-import os
-import json
 from torch.optim.lr_scheduler import ReduceLROnPlateau
 
 
-
-def LoadModel(net,StartBestModel,ModelsDirName,BestFileName,UseBestScore,device, load_epoch=None):
-
+def load_model(net, start_best_model, models_dirname, best_filename, use_best_score, device, load_epoch=None):
     scheduler = None
     optimizer = None
 
-    LowestError = 1e5
+    lowest_err = 1e5
 
-    NegativeMiningMode = 'Random'
+    negative_mining_mode = 'Random'
 
-    if StartBestModel:
-        FileList = glob.glob(ModelsDirName + BestFileName + '.pth')
+    if start_best_model:
+        flist = glob.glob(models_dirname + best_filename + '.pth')
     else:
-        FileList = glob.glob(ModelsDirName + "model*")
+        flist = glob.glob(models_dirname + "model*")
 
-    if FileList:
-        FileList.sort(key=os.path.getmtime)
+    if flist:
+        flist.sort(key=os.path.getmtime)
 
         if load_epoch is not None:
-            model_path = ModelsDirName + 'model_epoch_%s.pth' % load_epoch
+            model_path = models_dirname + 'model_epoch_%s.pth' % load_epoch
             print('%s loaded' % model_path)
             checkpoint = torch.load(model_path)
         else:
-            print(FileList[-1] + ' loaded')
-            checkpoint = torch.load(FileList[-1])
+            print(flist[-1] + ' loaded')
+            checkpoint = torch.load(flist[-1])
 
-        if ('LowestError' in checkpoint.keys()) and UseBestScore:
-            LowestError = checkpoint['LowestError']
+        if ('lowest_err' in checkpoint.keys()) and use_best_score:
+            lowest_err = checkpoint['lowest_err']
 
-        if 'NegativeMiningMode' in checkpoint.keys():
-            NegativeMiningMode = checkpoint['NegativeMiningMode']
+        if 'negative_mining_mode' in checkpoint.keys():
+            negative_mining_mode = checkpoint['negative_mining_mode']
 
         net_dict = net.state_dict()
         checkpoint['state_dict'] = {k: v for k, v in checkpoint['state_dict'].items() if
@@ -47,7 +46,6 @@ def LoadModel(net,StartBestModel,ModelsDirName,BestFileName,UseBestScore,device,
         if 'optimizer_name' in checkpoint.keys():
             optimizer = torch.optim.Adam(net.parameters())
             try:
-                #optimizer.load_state_dict(checkpoint['optimizer'])
                 optimizer = checkpoint['optimizer']
                 for state in optimizer.state.values():
                     for k, v in state.items():
@@ -57,37 +55,26 @@ def LoadModel(net,StartBestModel,ModelsDirName,BestFileName,UseBestScore,device,
                 print(e)
                 print('Optimizer loading error')
 
-
-
-
         if ('scheduler_name' in checkpoint.keys()) and (optimizer != None):
 
             try:
                 if checkpoint['scheduler_name'] == 'ReduceLROnPlateau':
                     scheduler = ReduceLROnPlateau(optimizer, mode='min', factor=0.5, patience=6, verbose=True)
 
-                if checkpoint['scheduler_name'] == 'StepLR':
-                    scheduler = StepLR(optimizer, step_size=1, gamma=10)
-
-                #scheduler.load_state_dict(checkpoint['scheduler'])
-                scheduler= checkpoint['scheduler']
+                scheduler = checkpoint['scheduler']
             except Exception as e:
                 print(e)
                 print('Optimizer loading error')
 
-        StartEpoch = checkpoint['epoch'] + 1
+        start_epoch = checkpoint['epoch'] + 1
     else:
-        print('Weights file NOT loaded!!')
-        optimizer  = None
-        StartEpoch = 0
+        print('Weights file not loaded')
+        optimizer = None
+        start_epoch = 0
 
-    FileList = glob.glob(ModelsDirName + BestFileName + '.pth')
-    # noinspection PyInterpreter
+    print('lowest_err: ' + repr(lowest_err)[0:6])
 
-    print('LowestError: ' + repr(LowestError)[0:6])
-
-    return net,optimizer,LowestError,StartEpoch,scheduler,NegativeMiningMode
-
+    return net, optimizer, lowest_err, start_epoch, scheduler, negative_mining_mode
 
 
 def pdist(vectors):
@@ -115,6 +102,7 @@ class AllPositivePairSelector(PairSelector):
     Discards embeddings and generates all possible pairs given labels.
     If balance is True, negative pairs are a random sample to match the number of positive samples
     """
+
     def __init__(self, balance=True):
         super(AllPositivePairSelector, self).__init__()
         self.balance = balance
@@ -201,7 +189,6 @@ class AllTripletSelector(TripletSelector):
         return torch.LongTensor(np.array(triplets))
 
 
-
 class HardNegativesTripletSelector(TripletSelector):
     """
     Returns all possible triplets
@@ -279,7 +266,8 @@ class FunctionNegativeTripletSelector(TripletSelector):
 
             ap_distances = distance_matrix[anchor_positives[:, 0], anchor_positives[:, 1]]
             for anchor_positive, ap_distance in zip(anchor_positives, ap_distances):
-                loss_values = ap_distance - distance_matrix[torch.LongTensor(np.array([anchor_positive[0]])), torch.LongTensor(negative_indices)] + self.margin
+                loss_values = ap_distance - distance_matrix[
+                    torch.LongTensor(np.array([anchor_positive[0]])), torch.LongTensor(negative_indices)] + self.margin
                 loss_values = loss_values.data.cpu().numpy()
                 hard_negative = self.negative_selection_fn(loss_values)
                 if hard_negative is not None:
@@ -295,20 +283,20 @@ class FunctionNegativeTripletSelector(TripletSelector):
 
 
 def HardestNegativeTripletSelector(margin, cpu=False): return FunctionNegativeTripletSelector(margin=margin,
-                                                                                 negative_selection_fn=hardest_negative,
-                                                                                 cpu=cpu)
+                                                                                              negative_selection_fn=hardest_negative,
+                                                                                              cpu=cpu)
 
 
 def RandomNegativeTripletSelector(margin, cpu=False): return FunctionNegativeTripletSelector(margin=margin,
-                                                                                negative_selection_fn=random_hard_negative,
-                                                                                cpu=cpu)
+                                                                                             negative_selection_fn=random_hard_negative,
+                                                                                             cpu=cpu)
 
 
 def SemihardNegativeTripletSelector(margin, cpu=False): return FunctionNegativeTripletSelector(margin=margin,
-                                                                                  negative_selection_fn=lambda x: semihard_negative(x, margin),
-                                                                                  cpu=cpu)
-
-
+                                                                                               negative_selection_fn=lambda
+                                                                                                   x: semihard_negative(
+                                                                                                   x, margin),
+                                                                                               cpu=cpu)
 
 
 class MultiEpochsDataLoader(torch.utils.data.DataLoader):
@@ -342,17 +330,19 @@ class _RepeatSampler(object):
             yield from iter(self.sampler)
 
 
-
-
 class MyGradScaler:
     def __init__(self):
         pass
+
     def scale(self, loss):
         return loss
+
     def unscale_(self, optimizer):
         pass
+
     def step(self, optimizer):
         optimizer.step()
+
     def update(self):
         pass
 
@@ -368,3 +358,53 @@ def save_best_model_stats(dir, epoch, test_err, test_data):
     fpath = os.path.join(dir, 'visnir_best_model_stats.json')
     with open(fpath, 'w', encoding='utf-8') as f:
         json.dump(content, f, ensure_ascii=False, indent=4)
+
+
+def FPR95Accuracy(Dist, Labels):
+    PosIdx = np.squeeze(np.asarray(np.where(Labels == 1)))
+    NegIdx = np.squeeze(np.asarray(np.where(Labels == 0)))
+
+    NegDist = Dist[NegIdx]
+    PosDist = np.sort(Dist[PosIdx])
+
+    Val = PosDist[int(0.95 * PosDist.shape[0])]
+
+    FalsePos = sum(NegDist < Val);
+
+    FPR95Accuracy = FalsePos / float(NegDist.shape[0])
+
+    return FPR95Accuracy
+
+
+def FPR95Threshold(PosDist):
+    PosDist = PosDist.sort(dim=-1, descending=False)[0]
+    Val = PosDist[int(0.95 * PosDist.shape[0])]
+
+    return Val
+
+
+def normalize_image(x):
+    return x / (255.0 / 2)
+
+
+def evaluate_network(net, data1, data2, device, step_size):
+    with torch.no_grad():
+
+        for k in range(0, data1.shape[0], step_size):
+
+            a = data1[k:(k + step_size), :, :, :]
+            b = data2[k:(k + step_size), :, :, :]
+
+            a, b = a.to(device), b.to(device)
+            x = net(a, b)
+
+            if k == 0:
+                keys = list(x.keys())
+                emb = dict()
+                for key in keys:
+                    emb[key] = np.zeros(tuple([data1.shape[0]]) + tuple(x[key].shape[1:]), dtype=np.float32)
+
+            for key in keys:
+                emb[key][k:(k + step_size)] = x[key].cpu()
+
+    return emb

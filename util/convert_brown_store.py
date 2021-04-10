@@ -23,6 +23,7 @@ def save_results(fpath, data, labels, set_labels):
         f.create_dataset('Labels', data=labels)
         f.create_dataset('Set', data=set_labels)
 
+
 def convert_single_ds():
     convert_train = True
     convert_test = False
@@ -44,6 +45,7 @@ def convert_single_ds():
                 set_labels = np.full(labels.shape, 1)
             save_results(new_train_file_path % dataset, data, labels, set_labels)
 
+
 def convert_all_ds_train():
     ds_size = 500000
     with h5py.File(new_full_train_file_path, 'w') as f:
@@ -52,11 +54,14 @@ def convert_all_ds_train():
         set = f.create_dataset('Set', (ds_size * 3,), maxshape=(None,))
         for i, ds in enumerate(datasets):
             with h5py.File(new_train_file_path % ds, 'r') as dsf:
-                data[i * ds_size: (i+1) * ds_size] = np.array(dsf.get('Data'), np.float32)
+                data[i * ds_size: (i + 1) * ds_size] = np.array(dsf.get('Data'), np.float32)
                 labels[i * ds_size: (i + 1) * ds_size] = np.array(dsf.get('Labels'), np.float32)
                 # set[i * ds_size: (i + 1) * ds_size] = dsf.get('Set')
+
+
 def main():
     # convert_single_ds()
     convert_all_ds_train()
+
 
 main()

@@ -1,110 +1,79 @@
-import torch
-import torchvision
-import matplotlib.pyplot as plt
-import numpy as np
 import glob
 import os
-import copy
-from tensorboardX import SummaryWriter
-from torch.optim.lr_scheduler import ReduceLROnPlateau
-from torch.utils import data
-import torch.optim as optim
-import torch.nn as nn
-from tqdm import tqdm
+from multiprocessing import freeze_support
 
-#my classes
-from my_classes import imshow, ShowRowImages, ShowTwoRowImages, EvaluateSofmaxNet
-from my_classes import DatasetPairwiseTriplets, FPR95Accuracy
-from my_classes import SingleNet, MetricLearningCnn, EvaluateNet, SiamesePairwiseSoftmax,NormalizeImages
-from losses import ContrastiveLoss, TripletLoss,OnlineTripletLoss,OnlineHardNegativeMiningTripletLoss
-from util.read_hdf5_data import read_hdf5_data
 import h5py
+import numpy as np
+import torch
 
-
-
-
-from multiprocessing import Process, freeze_support
+from util import read_hdf5_data
 
 if __name__ == '__main__':
     freeze_support()
 
     device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
-    NumGpus = torch.cuda.device_count()
-
-    # Assuming that we are on a CUDA machine, this should print a CUDA device:
     print(device)
-    name = torch.cuda.get_device_name(0)
 
-    ModelsDirName   = './models/'
-    BestFileName    = 'visnir_best'
-    TestDir = './data/test/'
-    TestDir = './data/Vis-Nir_grid/'
-    LoadAllTestSets = True
-    TrainFile = 'f:/multisensor/train/Vis-Nir_Train.mat'
-    TrainFile = './data/brown/patchdata_64x64.h5'
+    test_dir = './data/Vis-Nir_grid/'
+    load_all_test_sets = True
+    train_file = './data/brown/patchdata_64x64.h5'
 
-    ConvertTrainFiles = True
-    ConvertTestFiles  = True
-    ConvertPatchFiles = True
+    convert_train_files = True
+    convert_test_files = True
+    convert_patch_files = True
 
-
-    if ConvertPatchFiles:
-        Data              = read_matlab_imdb(TrainFile)
-        Data['liberty']   = TrainingSetData = np.reshape(Data['liberty'], (Data['liberty'].shape[0], 1, 64, 64), order='F')
-        Data['notredame'] = TrainingSetData = np.reshape(Data['notredame'],(Data['notredame'].shape[0], 1, 64, 64), order='F')
-        Data['yosemite']  = TrainingSetData = np.reshape(Data['yosemite'],(Data['yosemite'].shape[0], 1, 64, 64), order='F')
+    if convert_patch_files:
+        data = read_hdf5_data(train_file)
+        data['liberty'] = np.reshape(data['liberty'], (data['liberty'].shape[0], 1, 64, 64), order='F')
+        data['notredame'] = np.reshape(data['notredame'], (data['notredame'].shape[0], 1, 64, 64), order='F')
+        data['yosemite'] = np.reshape(data['yosemite'], (data['yosemite'].shape[0], 1, 64, 64), order='F')
 
         with h5py.File('patchdata1' + '.h5', 'w') as f:
-            f.create_dataset('liberty', data=Data['liberty'])
-            f.create_dataset('notredame', data=Data['notredame'])
-            f.create_dataset('yosemite', data=Data['yosemite'])
+            f.create_dataset('liberty', data=data['liberty'])
+            f.create_dataset('notredame', data=data['notredame'])
+            f.create_dataset('yosemite', data=data['yosemite'])
 
+    if convert_train_files:
+        path, dataset_name = os.path.split(train_file)
+        dataset_name = os.path.splitext(train_file)[0]
 
+        data = read_hdf5_data(train_file)
+        training_set_data = np.transpose(data['Data'], (0, 3, 2, 1))
+        training_set_labels = np.squeeze(data['Labels'])
+        training_set_splits = np.squeeze(data['Set'])
 
-    if ConvertTrainFiles:
-        path, DatasetName = os.path.split(TrainFile)
-        DatasetName = os.path.splitext(TrainFile)[0]
+        training_set_data = np.reshape(training_set_data, (
+        training_set_data.shape[0], 1, training_set_data.shape[1], training_set_data.shape[2],
+        training_set_data.shape[3]), order='F')
+        training_set_labels = 2 - training_set_labels
 
-        Data              = read_matlab_imdb(TrainFile)
-        TrainingSetData   = np.transpose(Data['data'], (0, 3, 2, 1))
-        TrainingSetLabels = np.squeeze(Data['labels'])
-        TrainingSetSet    = np.squeeze(Data['set'])
+        with h5py.File(dataset_name + '.hdf5', 'w') as f:
+            f.create_dataset('Data', data=training_set_data, compression='gzip', compression_opts=9)
+            f.create_dataset('Labels', data=training_set_labels, compression='gzip', compression_opts=9)
+            f.create_dataset('Set', data=training_set_splits, compression='gzip', compression_opts=9)
 
-        TrainingSetData   = np.reshape(TrainingSetData,(TrainingSetData.shape[0], 1, TrainingSetData.shape[1], TrainingSetData.shape[2], TrainingSetData.shape[3]),order='F')
-        TrainingSetLabels = 2 - TrainingSetLabels
+    if convert_test_files:
 
-        with h5py.File(DatasetName + '.hdf5', 'w') as f:
-            f.create_dataset('Data', data=TrainingSetData, compression='gzip', compression_opts=9)
-            f.create_dataset('Labels', data=TrainingSetLabels, compression='gzip', compression_opts=9)
-            f.create_dataset('Set', data=TrainingSetSet, compression='gzip', compression_opts=9)
+        # Load all datasets
+        file_list = glob.glob(test_dir + "*.mat")
 
+        if load_all_test_sets == False:
+            file_list = [file_list[0]]
 
+        file_list = ['./data/Vis-Nir_grid/Vis-Nir_grid_Test.mat']
 
+        test_data = dict()
+        for f in file_list:
+            path, dataset_name = os.path.split(f)
+            dataset_name = os.path.splitext(dataset_name)[0]
 
-    if ConvertTestFiles:
+            print(f)
+            data = read_hdf5_data(f)
 
-        #Load all datasets
-        FileList = glob.glob(TestDir + "*.mat")
+            x = np.transpose(data['testData'], (0, 3, 2, 1))
+            TestLabels = torch.from_numpy(2 - data['testLabels'])
 
-        if LoadAllTestSets == False:
-            FileList = [FileList[0]]
-
-        FileList = ['./data/Vis-Nir_grid/Vis-Nir_grid_Test.mat']
-
-        TestData = dict()
-        for File in FileList:
-
-            path, DatasetName = os.path.split(File)
-            DatasetName       = os.path.splitext(DatasetName)[0]
-
-            print(File)
-            Data     = read_matlab_imdb(File)
-
-            x    = np.transpose(Data['testData'], (0, 3, 2, 1))
-            TestLabels = torch.from_numpy(2 - Data['testLabels'])
-
-            x    = np.reshape(x, (x.shape[0], 1, x.shape[1], x.shape[2], x.shape[3]),order='F')
-            with h5py.File(path+'/'+DatasetName[:-5] + '.hdf5', 'w') as f:
-                f.create_dataset('Data', data=x,compression='gzip',compression_opts=9)
-                f.create_dataset('Labels', data=TestLabels,compression='gzip',compression_opts=9)
-
+            x = np.reshape(x, (x.shape[0], 1, x.shape[1], x.shape[2], x.shape[3]), order='F')
+            with h5py.File(path + '/' + dataset_name[:-5] + '.hdf5', 'w') as f:
+                f.create_dataset('Data', data=x, compression='gzip', compression_opts=9)
+                f.create_dataset('Labels', data=TestLabels, compression='gzip', compression_opts=9)

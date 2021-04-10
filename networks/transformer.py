@@ -1,4 +1,3 @@
-# Copyright (c) Facebook, Inc. and its affiliates. All Rights Reserved
 """
 DETR Transformer class.
 
@@ -8,7 +7,7 @@ Copy-paste from torch.nn.Transformer with modifications:
     * decoder returns a stack of activations from all decoding layers
 """
 import copy
-from typing import Optional, List
+from typing import Optional
 
 import torch
 import torch.nn.functional as F
@@ -44,34 +43,28 @@ class Transformer(nn.Module):
             if p.dim() > 1:
                 nn.init.xavier_uniform_(p)
 
-    def forward(self, src, mask, query_embed, pos_embed,query_pos=None):
+    def forward(self, src, mask, query_embed, pos_embed, query_pos=None):
         # flatten NxCxHxW to HWxNxC
-        #bs, c, h, w = src.shape
         bs = src.shape[1]
-
-
-        #reshpe activation map in SRC to standard Transformer input
-        #src = src.flatten(2).permute(2, 0, 1)
 
         if pos_embed is not None:
             pos_embed = pos_embed.flatten(2)
 
-        # reshpe Embeddings in QUERY to standard Transformer input
+        # reshape Embeddings in QUERY to standard Transformer input
         if query_embed is not None:
             query_embed = query_embed.unsqueeze(1).repeat(1, bs, 1)
 
         if mask is not None:
             mask = mask.flatten(1)
 
-        #tgt = torch.zeros_like(query_embed)
         tgt = query_embed
         memory = self.encoder(src, src_key_padding_mask=mask, pos=pos_embed)
 
-        #apply Transformer
-        hs = self.decoder(tgt, memory, memory_key_padding_mask=None,pos=None, query_pos=None)
+        # apply Transformer
+        hs = self.decoder(tgt, memory, memory_key_padding_mask=None, pos=None, query_pos=None)
 
-        #return hs.transpose(1, 2), memory.permute(1, 2, 0).view(bs, c, h, w)
-        return hs.squeeze(),memory
+        # return hs.transpose(1, 2), memory.permute(1, 2, 0).view(bs, c, h, w)
+        return hs.squeeze(), memory
 
 
 class TransformerEncoder(nn.Module):

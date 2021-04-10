@@ -1,19 +1,19 @@
-import torch
 import math
 import random
+
+import torch
 from PIL import Image
+
 try:
     import accimage
 except ImportError:
     accimage = None
 import numpy as np
 import numbers
-import types
 from collections.abc import Sequence, Iterable
 import warnings
 
 import torch.nn.functional as F
-
 
 __all__ = ["Compose", "ToTensor", "PILToTensor", "ConvertImageDtype", "ToPILImage", "Normalize", "Resize", "Scale",
            "CenterCrop", "Pad", "Lambda", "RandomApply", "RandomChoice", "RandomOrder", "RandomCrop",
@@ -61,7 +61,7 @@ class Compose(object):
             img = t(img)
 
         if img.ndims == 3:
-            aa =9
+            aa = 9
 
         return img
 
@@ -161,6 +161,7 @@ class ToPILImage(object):
 
     .. _PIL.Image mode: https://pillow.readthedocs.io/en/latest/handbook/concepts.html#concept-modes
     """
+
     def __init__(self, mode=None):
         self.mode = mode
 
@@ -256,6 +257,7 @@ class Scale(Resize):
     """
     Note: This transform is deprecated in favor of Resize.
     """
+
     def __init__(self, *args, **kwargs):
         warnings.warn("The use of the transforms.Scale transform is deprecated, " +
                       "please use transforms.Resize instead.")
@@ -344,7 +346,7 @@ class Pad(object):
         return F.pad(img, self.padding, self.fill, self.padding_mode)
 
     def __repr__(self):
-        return self.__class__.__name__ + '(padding={0}, fill={1}, padding_mode={2})'.\
+        return self.__class__.__name__ + '(padding={0}, fill={1}, padding_mode={2})'. \
             format(self.padding, self.fill, self.padding_mode)
 
 
@@ -421,6 +423,7 @@ class RandomApply(RandomTransforms):
 class RandomOrder(RandomTransforms):
     """Apply a list of transformations in a random order
     """
+
     def __call__(self, img):
         order = list(range(len(self.transforms)))
         random.shuffle(order)
@@ -432,6 +435,7 @@ class RandomOrder(RandomTransforms):
 class RandomChoice(RandomTransforms):
     """Apply single transformation randomly picked from a list
     """
+
     def __call__(self, img):
         t = random.choice(self.transforms)
         return t(img)
@@ -751,6 +755,7 @@ class RandomSizedCrop(RandomResizedCrop):
     """
     Note: This transform is deprecated in favor of RandomResizedCrop.
     """
+
     def __init__(self, *args, **kwargs):
         warnings.warn("The use of the transforms.RandomSizedCrop transform is deprecated, " +
                       "please use transforms.RandomResizedCrop instead.")
@@ -1153,7 +1158,7 @@ class RandomAffine(object):
                 self.shear = (-shear, shear)
             else:
                 assert isinstance(shear, (tuple, list)) and \
-                    (len(shear) == 2 or len(shear) == 4), \
+                       (len(shear) == 2 or len(shear) == 4), \
                     "shear should be a list or tuple and it must be of length 2 or 4."
                 # X-Axis shear with [min, max]
                 if len(shear) == 2:

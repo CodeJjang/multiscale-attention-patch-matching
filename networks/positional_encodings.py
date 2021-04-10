@@ -1,4 +1,3 @@
-import math
 import numpy as np
 import torch
 import torch.nn as nn
@@ -11,7 +10,7 @@ the positional encodings will be added to the ch dimension. The Attention is All
 """
 
 
-#(batchsize, x, ch)
+# (batchsize, x, ch)
 class PositionalEncoding1D(nn.Module):
     def __init__(self, channels):
         """
@@ -33,21 +32,20 @@ class PositionalEncoding1D(nn.Module):
         pos_x = torch.arange(x, device=tensor.device).type(self.inv_freq.type())
         sin_inp_x = torch.einsum("i,j->ij", pos_x, self.inv_freq)
         emb_x = torch.cat((sin_inp_x.sin(), sin_inp_x.cos()), dim=-1)
-        emb = torch.zeros((x,self.channels),device=tensor.device).type(tensor.type())
-        emb[:,:self.channels] = emb_x
+        emb = torch.zeros((x, self.channels), device=tensor.device).type(tensor.type())
+        emb[:, :self.channels] = emb_x
 
-        return emb[None,:,:orig_ch]
+        return emb[None, :, :orig_ch]
 
 
-
-#(batchsize, x, y, ch)
+# (batchsize, x, y, ch)
 class PositionalEncoding2D(nn.Module):
     def __init__(self, channels):
         """
         :param channels: The last dimension of the tensor you want to apply pos emb to.
         """
         super(PositionalEncoding2D, self).__init__()
-        channels = int(np.ceil(channels/2))
+        channels = int(np.ceil(channels / 2))
         self.channels = channels
         inv_freq = 1. / (10000 ** (torch.arange(0, channels, 2).float() / channels))
         self.register_buffer('inv_freq', inv_freq)
@@ -66,22 +64,21 @@ class PositionalEncoding2D(nn.Module):
         sin_inp_y = torch.einsum("i,j->ij", pos_y, self.inv_freq)
         emb_x = torch.cat((sin_inp_x.sin(), sin_inp_x.cos()), dim=-1).unsqueeze(1)
         emb_y = torch.cat((sin_inp_y.sin(), sin_inp_y.cos()), dim=-1)
-        emb = torch.zeros((x,y,self.channels*2),device=tensor.device).type(tensor.type())
-        emb[:,:,:self.channels] = emb_x
-        emb[:,:,self.channels:2*self.channels] = emb_y
+        emb = torch.zeros((x, y, self.channels * 2), device=tensor.device).type(tensor.type())
+        emb[:, :, :self.channels] = emb_x
+        emb[:, :, self.channels:2 * self.channels] = emb_y
 
-        return emb[None,:,:,:orig_ch]
+        return emb[None, :, :, :orig_ch]
 
 
-
-#(batchsize, x, y, z, ch)
+# (batchsize, x, y, z, ch)
 class PositionalEncoding3D(nn.Module):
     def __init__(self, channels):
         """
         :param channels: The last dimension of the tensor you want to apply pos emb to.
         """
         super(PositionalEncoding3D, self).__init__()
-        channels = int(np.ceil(channels/3))
+        channels = int(np.ceil(channels / 3))
         if channels % 2:
             channels += 1
         self.channels = channels
@@ -105,9 +102,39 @@ class PositionalEncoding3D(nn.Module):
         emb_x = torch.cat((sin_inp_x.sin(), sin_inp_x.cos()), dim=-1).unsqueeze(1).unsqueeze(1)
         emb_y = torch.cat((sin_inp_y.sin(), sin_inp_y.cos()), dim=-1).unsqueeze(1)
         emb_z = torch.cat((sin_inp_z.sin(), sin_inp_z.cos()), dim=-1)
-        emb = torch.zeros((x,y,z,self.channels*3),device=tensor.device).type(tensor.type())
-        emb[:,:,:,:self.channels] = emb_x
-        emb[:,:,:,self.channels:2*self.channels] = emb_y
-        emb[:,:,:,2*self.channels:] = emb_z
+        emb = torch.zeros((x, y, z, self.channels * 3), device=tensor.device).type(tensor.type())
+        emb[:, :, :, :self.channels] = emb_x
+        emb[:, :, :, self.channels:2 * self.channels] = emb_y
+        emb[:, :, :, 2 * self.channels:] = emb_z
 
-        return emb[None,:,:,:,:orig_ch]
+        return emb[None, :, :, :, :orig_ch]
+
+
+def prepare_2d_pos_encodings(pos_enc_x, pos_enc_y, row_num, col_num):
+    pos_enc_x = pos_enc_x[0:col_num].unsqueeze(0)  # x=[1,..,20]
+    pos_enc_y = pos_enc_y[0:row_num]
+
+    for i in range(row_num):
+
+        curr_y = pos_enc_y[i, :].unsqueeze(0).unsqueeze(0).repeat(1, col_num, 1)
+
+        if i == 0:
+            pos_encoding_2d = torch.cat((pos_enc_x, curr_y), 2)
+        else:
+            curr_pos_encoding_2d = torch.cat((pos_enc_x, curr_y), 2)
+
+            pos_encoding_2d = torch.cat((pos_encoding_2d, curr_pos_encoding_2d), 0)
+
+    return pos_encoding_2d
+
+
+def prepare_2d_pos_encodings_seq(pos_enc_x, pos_enc_y, row_num, col_num):
+    pos_encoding_2d = prepare_2d_pos_encodings(pos_enc_x, pos_enc_y, row_num, col_num)
+
+    pos_enc_2d_seq = pos_encoding_2d.permute(2, 0, 1)
+    pos_enc_2d_seq = pos_enc_2d_seq[:, 0:row_num, 0:col_num]
+    pos_enc_2d_seq = pos_enc_2d_seq.reshape(
+        (pos_enc_2d_seq.shape[0], pos_enc_2d_seq.shape[1] * pos_enc_2d_seq.shape[2]))
+    pos_enc_2d_seq = pos_enc_2d_seq.permute(1, 0).unsqueeze(1)
+
+    return pos_enc_2d_seq
