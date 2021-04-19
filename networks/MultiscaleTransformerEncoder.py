@@ -11,10 +11,10 @@ from networks.transformer import TransformerEncoderLayer, TransformerEncoder
 
 class MultiscaleTransformerEncoder(nn.Module):
 
-    def __init__(self, encoder_dim, pos_encoding_dim=20, output_attention_weights=False):
+    def __init__(self, dropout, encoder_dim=128, pos_encoding_dim=20, output_attention_weights=False):
         super(MultiscaleTransformerEncoder, self).__init__()
 
-        self.net = BackboneCNN()
+        self.backbone_cnn = BackboneCNN(output_feat_map=True, dropout=dropout)
 
         self.query = nn.Parameter(torch.randn(1, encoder_dim))
         self.query_pos_encoding = nn.Parameter(torch.randn(1, encoder_dim))
@@ -22,8 +22,9 @@ class MultiscaleTransformerEncoder(nn.Module):
         self.pos_encoding_x = nn.Parameter(torch.randn(pos_encoding_dim, int(encoder_dim / 2)))
         self.pos_encoding_y = nn.Parameter(torch.randn(pos_encoding_dim, int(encoder_dim / 2)))
 
-        self.output_num = [8, 8, 4, 2, 1]
-        # self.output_num = [8, 4, 2, 1]
+        # spp levels; first feature map will be passed in a residual connection to the output
+        self.spp_levels = [8, 8, 4, 2, 1]
+        # self.spp_levels = [8, 4, 2, 1]
 
         encoder_layers = 2
         encoder_heads = 2
@@ -33,21 +34,21 @@ class MultiscaleTransformerEncoder(nn.Module):
                                                      dropout=0.1, activation="relu", normalize_before=False)
         self.encoder = TransformerEncoder(encoder_layer=self.encoder_layer, num_layers=encoder_layers)
 
-        # self.SPFC = nn.Linear(8576, encoder_dim) # this is original 8,4,2,1
-        self.SPFC = nn.Linear(8704, encoder_dim)  # 8,8,4,2,1 pyramid
+        # self.SPP_FC = nn.Linear(8576, encoder_dim) # for [8,4,2,1] SPP
+        self.SPP_FC = nn.Linear(8704, encoder_dim)  # for [8,8,4,2,1] SPP
         self.output_attention_weights = output_attention_weights
 
     def encoder_spp(self, previous_conv, num_sample, previous_conv_size):
         attention_weights = []
-        for i in range(len(self.output_num)):
+        for i in range(len(self.spp_levels)):
 
             # Pooling support
-            h_wid = int(math.ceil(previous_conv_size[0] / self.output_num[i]))
-            w_wid = int(math.ceil(previous_conv_size[1] / self.output_num[i]))
+            h_wid = int(math.ceil(previous_conv_size[0] / self.spp_levels[i]))
+            w_wid = int(math.ceil(previous_conv_size[1] / self.spp_levels[i]))
 
             # Padding to retain orthogonal dimensions
-            h_pad = int((h_wid * self.output_num[i] - previous_conv_size[0] + 1) / 2)
-            w_pad = int((w_wid * self.output_num[i] - previous_conv_size[1] + 1) / 2)
+            h_pad = int((h_wid * self.spp_levels[i] - previous_conv_size[0] + 1) / 2)
+            w_pad = int((w_wid * self.spp_levels[i] - previous_conv_size[1] + 1) / 2)
 
             # apply pooling
             maxpool = nn.MaxPool2d((h_wid, w_wid), stride=(h_wid, w_wid), padding=(h_pad, w_pad))
@@ -86,21 +87,31 @@ class MultiscaleTransformerEncoder(nn.Module):
             return spp, attention_weights
         return spp
 
-    def forward(self, x, dropout):
+    def forward_one(self, x):
 
-        output1, activ_map = self.net(x, return_activations=True, dropout=dropout)
+        activ_map = self.backbone_cnn(x)
 
         spp_result = self.encoder_spp(activ_map, x.size(0),
                                       [int(activ_map.size(2)), int(activ_map.size(3))])
         if self.output_attention_weights:
-            spp_a = spp_result[0]
+            spp_activations = spp_result[0]
             attention_weights = spp_result[1]
         else:
-            spp_a = spp_result
+            spp_activations = spp_result
 
-        res = self.SPFC(spp_a)
+        res = self.SPP_FC(spp_activations)
         res = F.normalize(res, dim=1, p=2)
 
         if self.output_attention_weights:
             return res, attention_weights
+        return res
+
+    def forward(self, x1, x2):
+        res = dict()
+        if not self.output_attention_weights:
+            res['Emb1'] = self.forward_one(x1)
+            res['Emb2'] = self.forward_one(x2)
+        else:
+            res['Emb1'], res['Emb1Attention'] = self.forward_one(x1)
+            res['Emb2'], res['Emb2Attention'] = self.forward_one(x2)
         return res

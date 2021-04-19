@@ -8,7 +8,7 @@ from layers.spp_layer import spatial_pyramid_pool
 
 class BackboneCNN(nn.Module):
 
-    def __init__(self):
+    def __init__(self, dropout, output_feat_map=False):
         super(BackboneCNN, self).__init__()
 
         self.block = nn.Sequential(
@@ -44,13 +44,14 @@ class BackboneCNN(nn.Module):
             nn.BatchNorm2d(128, affine=False),
         )
 
-        # self.output_num = [8, 4, 2, 1]
-        self.output_num = [8]
+        self.output_feat_map = output_feat_map
+        if not output_feat_map:
+            self.output_num = [8, 4, 2, 1]
+            self.fc1 = nn.Sequential(
+                nn.Linear(10880, 128)
+            )
 
-        self.fc1 = nn.Sequential(
-            # nn.Linear(10880, 128)
-            nn.Linear(8192, 128),
-        )
+        self.dropout = dropout
 
         return
 
@@ -61,26 +62,20 @@ class BackboneCNN(nn.Module):
         return (x - mp.detach().unsqueeze(-1).unsqueeze(-1).unsqueeze(-1).expand_as(x)) / sp.detach().unsqueeze(
             -1).unsqueeze(-1).unsqueeze(1).expand_as(x)
 
-    def forward(self, x, mode='Normalized', return_activations=False, dropout=0):
+    def forward(self, x, mode='Normalized'):
         batch_size = x.size(0)
         conv_feats = self.block(self.input_norm(x))
+        if self.output_feat_map:
+            return conv_feats
+
         spp = spatial_pyramid_pool(conv_feats, batch_size, [int(conv_feats.size(2)), int(conv_feats.size(3))],
                                    self.output_num)
 
-        if mode == 'NoFC':
-            return spp
-
-        spp = Dropout(dropout)(spp)  # 20% probability
+        spp = Dropout(self.dropout)(spp)
 
         feature_a = self.fc1(spp).reshape(batch_size, -1)
 
         if mode == 'Normalized':
-            if return_activations:
-                return F.normalize(feature_a, dim=1, p=2), conv_feats
-            else:
-                return F.normalize(feature_a, dim=1, p=2)
+            return F.normalize(feature_a, dim=1, p=2)
         else:
-            if return_activations:
-                return feature_a, conv_feats
-            else:
-                return feature_a
+            return feature_a

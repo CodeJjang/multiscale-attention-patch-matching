@@ -6,6 +6,8 @@ import numpy as np
 import torch
 from torch.optim.lr_scheduler import ReduceLROnPlateau
 
+from util.read_hdf5_data import read_hdf5_data
+
 
 def load_model(net, start_best_model, models_dirname, best_filename, use_best_score, device, load_epoch=None):
     scheduler = None
@@ -75,228 +77,6 @@ def load_model(net, start_best_model, models_dirname, best_filename, use_best_sc
     print('lowest_err: ' + repr(lowest_err)[0:6])
 
     return net, optimizer, lowest_err, start_epoch, scheduler, negative_mining_mode
-
-
-def pdist(vectors):
-    distance_matrix = -2 * vectors.mm(torch.t(vectors)) + vectors.pow(2).sum(dim=1).view(1, -1) + vectors.pow(2).sum(
-        dim=1).view(-1, 1)
-    return distance_matrix
-
-
-class PairSelector:
-    """
-    Implementation should return indices of positive pairs and negative pairs that will be passed to compute
-    Contrastive Loss
-    return positive_pairs, negative_pairs
-    """
-
-    def __init__(self):
-        pass
-
-    def get_pairs(self, embeddings, labels):
-        raise NotImplementedError
-
-
-class AllPositivePairSelector(PairSelector):
-    """
-    Discards embeddings and generates all possible pairs given labels.
-    If balance is True, negative pairs are a random sample to match the number of positive samples
-    """
-
-    def __init__(self, balance=True):
-        super(AllPositivePairSelector, self).__init__()
-        self.balance = balance
-
-    def get_pairs(self, embeddings, labels):
-        labels = labels.cpu().data.numpy()
-        all_pairs = np.array(list(combinations(range(len(labels)), 2)))
-        all_pairs = torch.LongTensor(all_pairs)
-        positive_pairs = all_pairs[(labels[all_pairs[:, 0]] == labels[all_pairs[:, 1]]).nonzero()]
-        negative_pairs = all_pairs[(labels[all_pairs[:, 0]] != labels[all_pairs[:, 1]]).nonzero()]
-        if self.balance:
-            negative_pairs = negative_pairs[torch.randperm(len(negative_pairs))[:len(positive_pairs)]]
-
-        return positive_pairs, negative_pairs
-
-
-class HardNegativePairSelector(PairSelector):
-    """
-    Creates all possible positive pairs. For negative pairs, pairs with smallest distance are taken into consideration,
-    matching the number of positive pairs.
-    """
-
-    def __init__(self, cpu=True):
-        super(HardNegativePairSelector, self).__init__()
-        self.cpu = cpu
-
-    def get_pairs(self, embeddings, labels):
-        if self.cpu:
-            embeddings = embeddings.cpu()
-        distance_matrix = pdist(embeddings)
-
-        labels = labels.cpu().data.numpy()
-        all_pairs = np.array(list(combinations(range(len(labels)), 2)))
-        all_pairs = torch.LongTensor(all_pairs)
-        positive_pairs = all_pairs[(labels[all_pairs[:, 0]] == labels[all_pairs[:, 1]]).nonzero()]
-        negative_pairs = all_pairs[(labels[all_pairs[:, 0]] != labels[all_pairs[:, 1]]).nonzero()]
-
-        negative_distances = distance_matrix[negative_pairs[:, 0], negative_pairs[:, 1]]
-        negative_distances = negative_distances.cpu().data.numpy()
-        top_negatives = np.argpartition(negative_distances, len(positive_pairs))[:len(positive_pairs)]
-        top_negative_pairs = negative_pairs[torch.LongTensor(top_negatives)]
-
-        return positive_pairs, top_negative_pairs
-
-
-class TripletSelector:
-    """
-    Implementation should return indices of anchors, positive and negative samples
-    return np array of shape [N_triplets x 3]
-    """
-
-    def __init__(self):
-        pass
-
-    def get_triplets(self, embeddings, labels):
-        raise NotImplementedError
-
-
-class AllTripletSelector(TripletSelector):
-    """
-    Returns all possible triplets
-    May be impractical in most cases
-    """
-
-    def __init__(self):
-        super(AllTripletSelector, self).__init__()
-
-    def get_triplets(self, embeddings, labels):
-        labels = labels.cpu().data.numpy()
-        triplets = []
-        for label in set(labels):
-            label_mask = (labels == label)
-            label_indices = np.where(label_mask)[0]
-            if len(label_indices) < 2:
-                continue
-            negative_indices = np.where(np.logical_not(label_mask))[0]
-            anchor_positives = list(combinations(label_indices, 2))  # All anchor-positive pairs
-
-            # Add all negatives for all positive pairs
-            temp_triplets = [[anchor_positive[0], anchor_positive[1], neg_ind] for anchor_positive in anchor_positives
-                             for neg_ind in negative_indices]
-            triplets += temp_triplets
-
-        return torch.LongTensor(np.array(triplets))
-
-
-class HardNegativesTripletSelector(TripletSelector):
-    """
-    Returns all possible triplets
-    May be impractical in most cases
-    """
-
-    def __init__(self):
-        super(HardNegativesTripletSelector, self).__init__()
-
-    def get_triplets(self, embeddings, labels):
-        labels = labels.cpu().data.numpy()
-        triplets = []
-        for label in set(labels):
-            label_mask = (labels == label)
-            label_indices = np.where(label_mask)[0]
-            if len(label_indices) < 2:
-                continue
-            negative_indices = np.where(np.logical_not(label_mask))[0]
-            anchor_positives = list(combinations(label_indices, 2))  # All anchor-positive pairs
-
-            # Add all negatives for all positive pairs
-            temp_triplets = [[anchor_positive[0], anchor_positive[1], neg_ind] for anchor_positive in anchor_positives
-                             for neg_ind in negative_indices]
-            triplets += temp_triplets
-
-        return torch.LongTensor(np.array(triplets))
-
-
-def hardest_negative(loss_values):
-    hard_negative = np.argmax(loss_values)
-    return hard_negative if loss_values[hard_negative] > 0 else None
-
-
-def random_hard_negative(loss_values):
-    hard_negatives = np.where(loss_values > 0)[0]
-    return np.random.choice(hard_negatives) if len(hard_negatives) > 0 else None
-
-
-def semihard_negative(loss_values, margin):
-    semihard_negatives = np.where(np.logical_and(loss_values < margin, loss_values > 0))[0]
-    return np.random.choice(semihard_negatives) if len(semihard_negatives) > 0 else None
-
-
-class FunctionNegativeTripletSelector(TripletSelector):
-    """
-    For each positive pair, takes the hardest negative sample (with the greatest triplet loss value) to create a triplet
-    Margin should match the margin used in triplet loss.
-    negative_selection_fn should take array of loss_values for a given anchor-positive pair and all negative samples
-    and return a negative index for that pair
-    """
-
-    def __init__(self, margin, negative_selection_fn, cpu=True):
-        super(FunctionNegativeTripletSelector, self).__init__()
-        self.cpu = cpu
-        self.margin = margin
-        self.negative_selection_fn = negative_selection_fn
-
-    def get_triplets(self, embeddings, labels):
-        if self.cpu:
-            embeddings = embeddings.cpu()
-        distance_matrix = pdist(embeddings)
-        distance_matrix = distance_matrix.cpu()
-
-        labels = labels.cpu().data.numpy()
-        triplets = []
-
-        for label in set(labels):
-            label_mask = (labels == label)
-            label_indices = np.where(label_mask)[0]
-            if len(label_indices) < 2:
-                continue
-            negative_indices = np.where(np.logical_not(label_mask))[0]
-            anchor_positives = list(combinations(label_indices, 2))  # All anchor-positive pairs
-            anchor_positives = np.array(anchor_positives)
-
-            ap_distances = distance_matrix[anchor_positives[:, 0], anchor_positives[:, 1]]
-            for anchor_positive, ap_distance in zip(anchor_positives, ap_distances):
-                loss_values = ap_distance - distance_matrix[
-                    torch.LongTensor(np.array([anchor_positive[0]])), torch.LongTensor(negative_indices)] + self.margin
-                loss_values = loss_values.data.cpu().numpy()
-                hard_negative = self.negative_selection_fn(loss_values)
-                if hard_negative is not None:
-                    hard_negative = negative_indices[hard_negative]
-                    triplets.append([anchor_positive[0], anchor_positive[1], hard_negative])
-
-        if len(triplets) == 0:
-            triplets.append([anchor_positive[0], anchor_positive[1], negative_indices[0]])
-
-        triplets = np.array(triplets)
-
-        return torch.LongTensor(triplets)
-
-
-def HardestNegativeTripletSelector(margin, cpu=False): return FunctionNegativeTripletSelector(margin=margin,
-                                                                                              negative_selection_fn=hardest_negative,
-                                                                                              cpu=cpu)
-
-
-def RandomNegativeTripletSelector(margin, cpu=False): return FunctionNegativeTripletSelector(margin=margin,
-                                                                                             negative_selection_fn=random_hard_negative,
-                                                                                             cpu=cpu)
-
-
-def SemihardNegativeTripletSelector(margin, cpu=False): return FunctionNegativeTripletSelector(margin=margin,
-                                                                                               negative_selection_fn=lambda
-                                                                                                   x: semihard_negative(
-                                                                                                   x, margin),
-                                                                                               cpu=cpu)
 
 
 class MultiEpochsDataLoader(torch.utils.data.DataLoader):
@@ -387,7 +167,7 @@ def normalize_image(x):
     return x / (255.0 / 2)
 
 
-def evaluate_network(net, data1, data2, device, step_size):
+def evaluate_network(net, data1, data2, device, step_size=800):
     with torch.no_grad():
 
         for k in range(0, data1.shape[0], step_size):
@@ -408,3 +188,69 @@ def evaluate_network(net, data1, data2, device, step_size):
                 emb[key][k:(k + step_size)] = x[key].cpu()
 
     return emb
+
+
+def load_test_datasets(test_dir):
+    file_list = glob.glob(test_dir + "*.hdf5")
+    test_data = dict()
+    for f in file_list:
+        path, dataset_name = os.path.split(f)
+        dataset_name = os.path.splitext(dataset_name)[0]
+
+        data = read_hdf5_data(f)
+
+        x = data['Data'].astype(np.float32)
+        test_labels = torch.from_numpy(np.squeeze(data['Labels']))
+        del data
+
+        x[:, :, :, :, 0] -= x[:, :, :, :, 0].mean()
+        x[:, :, :, :, 1] -= x[:, :, :, :, 1].mean()
+
+        x = normalize_image(x)
+        x = torch.from_numpy(x)
+
+        test_data[dataset_name] = dict()
+        test_data[dataset_name]['Data'] = x
+        test_data[dataset_name]['Labels'] = test_labels
+        del x
+    return test_data
+
+
+def load_validation_set(train_data, train_split, train_labels):
+    val_indices = np.squeeze(np.asarray(np.where(train_split == 3)))
+
+    # VALIDATION data
+    val_labels = torch.from_numpy(train_labels[val_indices])
+
+    val_data = train_data[val_indices, :, :, :].astype(np.float32)
+    val_data[:, :, :, :, 0] -= val_data[:, :, :, :, 0].mean()
+    val_data[:, :, :, :, 1] -= val_data[:, :, :, :, 1].mean()
+    val_data = torch.from_numpy(normalize_image(val_data))
+
+    return val_data, val_labels
+
+
+def evaluate_test(net, test_data, device, step_size=800):
+    samples_amount = 0
+    total_test_err = 0
+    for dataset_name in test_data:
+        emb = evaluate_network(net, test_data[dataset_name]['Data'][:, :, :, :, 0],
+                               test_data[dataset_name]['Data'][:, :, :, :, 1], device,
+                               step_size)
+
+        dist = np.power(emb['Emb1'] - emb['Emb2'], 2).sum(1)
+        test_data[dataset_name]['TestError'] = FPR95Accuracy(dist, test_data[dataset_name]['Labels'][:]) * 100
+        total_test_err += test_data[dataset_name]['TestError'] * test_data[dataset_name]['Data'].shape[0]
+        samples_amount += test_data[dataset_name]['Data'].shape[0]
+    total_test_err /= samples_amount
+
+    del emb
+    return total_test_err
+
+
+def evaluate_validation(net, val_data, val_labels, device):
+    val_emb = evaluate_network(net, val_data[:, :, :, :, 0], val_data[:, :, :, :, 1], device)
+
+    dist = np.power(val_emb['Emb1'] - val_emb['Emb2'], 2).sum(1)
+    val_err = FPR95Accuracy(dist, val_labels) * 100
+    return val_err
