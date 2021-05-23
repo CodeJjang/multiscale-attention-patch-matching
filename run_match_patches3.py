@@ -41,8 +41,8 @@ def assert_dir(dir_path):
 
 def load_datasets_paths(ds_name):
     if ds_name == 'VisNir':
-        test_dir = 'F:\\multisensor\\test\\'
-        train_file = 'F:\\multisensor\\train\\Vis-Nir_Train.hdf5'
+        test_dir = 'F:\\visnir\\test\\'
+        train_file = 'F:\\visnir\\train\\train.hdf5'
     elif ds_name == 'cuhk':
         test_dir = 'D:\\multisensor\\datasets\\cuhk\\test\\'
         train_file = 'D:\\multisensor\\datasets\\cuhk\\train.hdf5'
@@ -154,8 +154,8 @@ if __name__ == '__main__':
     print(device)
     name = torch.cuda.get_device_name(0)
 
-    ModelsDirName = './artifacts/symmetric_enc_transformer_11/models/'
-    LogsDirName = './artifacts/symmetric_enc_transformer_11/logs/'
+    ModelsDirName = './artifacts/symmetric_enc_transformer_test_12/models/'
+    LogsDirName = './artifacts/symmetric_enc_transformer_test_12/logs/'
     Description = 'Symmetric CNN with Triplet loss, no HM'
     BestFileName = 'best_model'
     FileName = 'model_epoch_'
@@ -199,7 +199,7 @@ if __name__ == '__main__':
     AssymetricInitializationPhase = False
 
     TestMode = False
-    use_validation = True
+    use_validation = False
     FreezeSymmetricBlock = False
 
     torch.manual_seed(0)
@@ -349,14 +349,13 @@ if __name__ == '__main__':
     Data = read_matlab_imdb(TrainFile)
     TrainingSetData = Data['Data']
     TrainingSetLabels = np.squeeze(Data['Labels'])
-    if use_validation:
-        TrainingSetSet = np.squeeze(Data['Set'])
+    TrainingSetSet = np.squeeze(Data['Set'])
     del Data
 
 
     ValSetData = []
+    TrainIdx = np.squeeze(np.asarray(np.where(TrainingSetSet == 1)))
     if use_validation:
-        TrainIdx = np.squeeze(np.asarray(np.where(TrainingSetSet == 1)))
         ValIdx = np.squeeze(np.asarray(np.where(TrainingSetSet == 3)))
 
         # VALIDATION data
@@ -367,9 +366,9 @@ if __name__ == '__main__':
         ValSetData[:, :, :, :, 1] -= ValSetData[:, :, :, :, 1].mean()
         ValSetData = torch.from_numpy(NormalizeImages(ValSetData))
 
-        # TRAINING data
-        TrainingSetData = np.squeeze(TrainingSetData[TrainIdx,])
-        TrainingSetLabels = TrainingSetLabels[TrainIdx]
+    # TRAINING data
+    TrainingSetData = np.squeeze(TrainingSetData[TrainIdx,])
+    TrainingSetLabels = TrainingSetLabels[TrainIdx]
 
     # define generators
     Training_Dataset = DatasetPairwiseTriplets(TrainingSetData, TrainingSetLabels, InnerBatchSize, Augmentation, GeneratorMode)
@@ -412,16 +411,16 @@ if __name__ == '__main__':
     print('LodaedNegativeMiningMode: ' + LodedNegativeMiningMode)
 
     # -------------------------------------  freeze layers --------------------------------------
-    net.FreezeSymmetricCnn(FreezeSymmetricCnn)
-    net.FreezeSymmetricBlock(FreezeSymmetricBlock)
-
-    net.FreezeAsymmetricCnn(FreezeAsymmetricCnn)
+    # net.FreezeSymmetricCnn(FreezeSymmetricCnn)
+    # net.FreezeSymmetricBlock(FreezeSymmetricBlock)
+    #
+    # net.FreezeAsymmetricCnn(FreezeAsymmetricCnn)
     # ------------------------------------------------------------------------------------------
 
     # -------------------- Initialization -----------------------
-    if AssymetricInitializationPhase:
-        net.netAS1 = copy.deepcopy(net.module.netS)
-        net.netAS2 = copy.deepcopy(net.module.netS)
+    # if AssymetricInitializationPhase:
+    #     net.netAS1 = copy.deepcopy(net.module.netS)
+    #     net.netAS2 = copy.deepcopy(net.module.netS)
 
 
     if NumGpus > 1:
@@ -446,13 +445,12 @@ if __name__ == '__main__':
 
     ########################################################################
     # Train the network
-    scheduler = ReduceLROnPlateau(optimizer, mode='min', factor=0.1, patience=3, verbose=True)
-    #LRscheduler =  StepLR(optimizer, step_size=10, gamma=0.1)
+    scheduler = ReduceLROnPlateau(optimizer, mode='min', factor=0.1, patience=5, verbose=True)
 
 
     if UseWarmUp:
         # WarmUpEpochs = 4
-        WarmUpEpochs = 8
+        WarmUpEpochs = 12
         # WarmUpEpochs = 10
         scheduler_warmup = GradualWarmupSchedulerV2(optimizer, multiplier=1, total_epoch=WarmUpEpochs,
                                                     after_scheduler= StepLR(optimizer, step_size=3, gamma=0.1))
@@ -467,7 +465,7 @@ if __name__ == '__main__':
 
 
     # writer.add_graph(net, images)
-    for epoch in range(StartEpoch, 1000):  # loop over the dataset multiple times
+    for epoch in range(StartEpoch, 90):  # loop over the dataset multiple times
 
         running_loss_pos = 0
         running_loss_neg = 0
@@ -531,7 +529,7 @@ if __name__ == '__main__':
                     scheduler =  StepLR(optimizer, step_size=10, gamma=0.1)
 
                 if type(scheduler).__name__ == 'ReduceLROnPlateau':
-                    scheduler = ReduceLROnPlateau(optimizer, mode='min', factor=0.1, patience=3, verbose=True)
+                    scheduler = ReduceLROnPlateau(optimizer, mode='min', factor=0.1, patience=5, verbose=True)
 
 
 
@@ -619,7 +617,9 @@ if __name__ == '__main__':
 
 
 
-            PrintStep = 20
+            PrintStep = 100
+            if epoch >= 40:
+                PrintStep = 20
             if (((i % PrintStep == 0) or (i * InnerBatchSize >= len(Training_DataLoader) - 1)) and (i > 0)) or TestMode:
 
                 if i > 0:
@@ -630,8 +630,8 @@ if __name__ == '__main__':
 
                 # val accuracy
                 StepSize = 800
+                net.eval()
                 if len(ValSetData) > 0:
-                    net.eval()
                     Emb = EvaluateDualNets(net, ValSetData[:, :, :, :, 0], ValSetData[:, :, :, :, 1],CnnMode,device, StepSize)
 
                     Dist = np.power(Emb['Emb1'] - Emb['Emb2'], 2).sum(1)
@@ -692,7 +692,7 @@ if __name__ == '__main__':
                     print(colored('Best error found and saved: ' + repr(TotalTestError)[0:5], 'red', attrs=['reverse', 'blink']))
                     #print('Best error found and saved: ' + repr(LowestError)[0:5])
                     filepath = ModelsDirName + BestFileName + '.pth'
-                    torch.save(state, filepath)
+                    # torch.save(state, filepath)
                     save_best_model_stats(ModelsDirName, epoch, TotalTestError, TestData, extra_data)
 
 
@@ -723,7 +723,7 @@ if __name__ == '__main__':
 
                 # save epoch
                 filepath = ModelsDirName + FileName + repr(epoch) + '.pth'
-                torch.save(state, filepath)
+                # torch.save(state, filepath)
 
             if (i * InnerBatchSize) > (len(Training_DataLoader) - 1):
                 bar.clear()

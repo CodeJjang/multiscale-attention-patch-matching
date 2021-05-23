@@ -337,79 +337,79 @@ class MetricLearningCnn(nn.Module):
 
         self.Mode   = Mode
 
-        self.netS   = Model()
-        self.netAS1 = Model()
-        self.netAS2 = Model()
+        # self.netS   = Model()
+        # self.netAS1 = Model()
+        # self.netAS2 = Model()
 
         K =128
         self.AttenS   =  AttentionEmbeddingCNN(K,EmbeddingMaxDim=20)
-        self.AttenAS1 = AttentionEmbeddingCNN(K, EmbeddingMaxDim=20)
-        self.AttenAS2 = AttentionEmbeddingCNN(K, EmbeddingMaxDim=20)
+        # self.AttenAS1 = AttentionEmbeddingCNN(K, EmbeddingMaxDim=20)
+        # self.AttenAS2 = AttentionEmbeddingCNN(K, EmbeddingMaxDim=20)
 
-        self.fc1 = Linear(2*K, K)
-        self.fc2 = Linear(2*K, K)
-        self.fc2 = copy.deepcopy(self.fc1)
-
-        self.fc1A = Linear(K, K)
-        self.fc2A = copy.deepcopy(self.fc1A)
-
-
-        self.Gain = torch.nn.Parameter(torch.ones(1))
-        self.Gain1 = torch.nn.Parameter(torch.ones(1))
-        self.Gain2 = torch.nn.Parameter(torch.ones(1))
-
-
-        #Decoder parameters
-        self.Query = nn.Parameter(torch.randn(1, K))
-        self.QueryPosEncode = nn.Parameter(torch.randn(1, K))
-
-        NumClasses=1
-        self.DecoderQueries         = nn.Parameter(torch.randn(NumClasses, K))
-
-        self.DecoderQueriesPos      = nn.Parameter(torch.randn(NumClasses, K))
-        self.AsymDecoderQueriesPos1 = nn.Parameter(torch.randn(NumClasses, K))
-        self.AsymDecoderQueriesPos2 = nn.Parameter(torch.randn(NumClasses, K))
-
-        self.AsymDecoderQueries1 = nn.Parameter(torch.randn(NumClasses, K))
-        self.AsymDecoderQueries2 = nn.Parameter(torch.randn(NumClasses, K))
-
-        EmbeddingMaxDim = 20
-        self.PosEncodingX = nn.Parameter(torch.randn(EmbeddingMaxDim, int(K / 2)))
-        self.PosEncodingY = nn.Parameter(torch.randn(EmbeddingMaxDim, int(K / 2)))
-
-
-        self.output_num = [8, 4, 2,1]
-
-        self.SymDecoderFC   = nn.Linear(8576, K)
-        self.AsymDecoderFC1 = nn.Linear(8576, K)
-        self.AsymDecoderFC2 = nn.Linear(8576, K)
-        #self.SymDecoderFC = nn.Linear(8960, K)
-
-        LayersNo = 2
-        HeadsNo  = 2
-
-        self.Transformer = Transformer(d_model=K, dropout=0.1, nhead=HeadsNo,
-                                           dim_feedforward=K,
-                                           num_encoder_layers=LayersNo,
-                                           num_decoder_layers=LayersNo,
-                                           normalize_before=False, return_intermediate_dec=False)
-
-
-        self.DecoderLayer = TransformerDecoderLayer(d_model=K, nhead=HeadsNo, dim_feedforward=K,
-                                                    dropout=0.1, activation="relu", normalize_before=False)
-        self.SymmetricDecoder = TransformerDecoder(decoder_layer=self.DecoderLayer, num_layers=LayersNo)
-
-        self.AsymmetricDecoder1 = TransformerDecoder(decoder_layer=self.DecoderLayer, num_layers=LayersNo)
-        self.AsymmetricDecoder2 = TransformerDecoder(decoder_layer=self.DecoderLayer, num_layers=LayersNo)
-
-
-
-        self.EncoderLayer = TransformerEncoderLayer(d_model=K, nhead=HeadsNo, dim_feedforward=int(K),
-                                                    dropout=0.1, activation="relu", normalize_before=False)
-        self.SymmetricEncoder = TransformerEncoder(encoder_layer=self.EncoderLayer, num_layers=LayersNo)
-
-        self.AsymmetricEncoder1 = TransformerEncoder(encoder_layer=self.EncoderLayer, num_layers=LayersNo)
-        self.AsymmetricEncoder2 = TransformerEncoder(encoder_layer=self.EncoderLayer, num_layers=LayersNo)
+        # self.fc1 = Linear(2*K, K)
+        # self.fc2 = Linear(2*K, K)
+        # self.fc2 = copy.deepcopy(self.fc1)
+        #
+        # self.fc1A = Linear(K, K)
+        # self.fc2A = copy.deepcopy(self.fc1A)
+        #
+        #
+        # self.Gain = torch.nn.Parameter(torch.ones(1))
+        # self.Gain1 = torch.nn.Parameter(torch.ones(1))
+        # self.Gain2 = torch.nn.Parameter(torch.ones(1))
+        #
+        #
+        # #Decoder parameters
+        # self.Query = nn.Parameter(torch.randn(1, K))
+        # self.QueryPosEncode = nn.Parameter(torch.randn(1, K))
+        #
+        # NumClasses=1
+        # self.DecoderQueries         = nn.Parameter(torch.randn(NumClasses, K))
+        #
+        # self.DecoderQueriesPos      = nn.Parameter(torch.randn(NumClasses, K))
+        # self.AsymDecoderQueriesPos1 = nn.Parameter(torch.randn(NumClasses, K))
+        # self.AsymDecoderQueriesPos2 = nn.Parameter(torch.randn(NumClasses, K))
+        #
+        # self.AsymDecoderQueries1 = nn.Parameter(torch.randn(NumClasses, K))
+        # self.AsymDecoderQueries2 = nn.Parameter(torch.randn(NumClasses, K))
+        #
+        # EmbeddingMaxDim = 20
+        # self.PosEncodingX = nn.Parameter(torch.randn(EmbeddingMaxDim, int(K / 2)))
+        # self.PosEncodingY = nn.Parameter(torch.randn(EmbeddingMaxDim, int(K / 2)))
+        #
+        #
+        # self.output_num = [8, 4, 2,1]
+        #
+        # self.SymDecoderFC   = nn.Linear(8576, K)
+        # self.AsymDecoderFC1 = nn.Linear(8576, K)
+        # self.AsymDecoderFC2 = nn.Linear(8576, K)
+        # #self.SymDecoderFC = nn.Linear(8960, K)
+        #
+        # LayersNo = 2
+        # HeadsNo  = 2
+        #
+        # self.Transformer = Transformer(d_model=K, dropout=0.1, nhead=HeadsNo,
+        #                                    dim_feedforward=K,
+        #                                    num_encoder_layers=LayersNo,
+        #                                    num_decoder_layers=LayersNo,
+        #                                    normalize_before=False, return_intermediate_dec=False)
+        #
+        #
+        # self.DecoderLayer = TransformerDecoderLayer(d_model=K, nhead=HeadsNo, dim_feedforward=K,
+        #                                             dropout=0.1, activation="relu", normalize_before=False)
+        # self.SymmetricDecoder = TransformerDecoder(decoder_layer=self.DecoderLayer, num_layers=LayersNo)
+        #
+        # self.AsymmetricDecoder1 = TransformerDecoder(decoder_layer=self.DecoderLayer, num_layers=LayersNo)
+        # self.AsymmetricDecoder2 = TransformerDecoder(decoder_layer=self.DecoderLayer, num_layers=LayersNo)
+        #
+        #
+        #
+        # self.EncoderLayer = TransformerEncoderLayer(d_model=K, nhead=HeadsNo, dim_feedforward=int(K),
+        #                                             dropout=0.1, activation="relu", normalize_before=False)
+        # self.SymmetricEncoder = TransformerEncoder(encoder_layer=self.EncoderLayer, num_layers=LayersNo)
+        #
+        # self.AsymmetricEncoder1 = TransformerEncoder(encoder_layer=self.EncoderLayer, num_layers=LayersNo)
+        # self.AsymmetricEncoder2 = TransformerEncoder(encoder_layer=self.EncoderLayer, num_layers=LayersNo)
 
 
 
@@ -914,7 +914,7 @@ class AttentionEmbeddingCNN(nn.Module):
         self.PosEncodingX = nn.Parameter(torch.randn(EmbeddingMaxDim, int(K / 2)))
         self.PosEncodingY = nn.Parameter(torch.randn(EmbeddingMaxDim, int(K / 2)))
 
-        self.output_num = [8, 4, 2, 1]
+        self.output_num = [8, 8, 4, 2, 1]
         # self.output_num = [8, 4]
         # self.output_num = [4,8]
         # self.output_num = [8]
@@ -927,8 +927,9 @@ class AttentionEmbeddingCNN(nn.Module):
                                                         dropout=0.1, activation="relu", normalize_before=False)
         self.Encoder = TransformerEncoder(encoder_layer=self.EncoderLayer, num_layers=EncoderLayersNo)
 
-        self.SPFC = nn.Linear(10880, K)
-        self.SPFC = nn.Linear(8576, K)
+        # self.SPFC = nn.Linear(10880, K)
+        # self.SPFC = nn.Linear(8576, K)
+        self.SPFC = nn.Linear(8704, K)
         # self.SPFC = nn.Linear(10240, K)
         # self.SPFC = nn.Linear(8192, K)
 

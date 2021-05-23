@@ -78,13 +78,12 @@ class Model(nn.Module):
             nn.BatchNorm2d(128, affine=False),
         )
 
-        self.output_num = [8, 4, 2, 1]
+        # self.output_num = [8, 4, 2, 1]
         self.output_num = [8]
 
-        self.fc1 = nn.Sequential(
-            #nn.Linear(10880, 128),
-            nn.Linear(8192, 128),
-        )
+        # self.fc1 = nn.Sequential(
+        #     nn.Linear(8192, 128),
+        # )
 
         return
 
@@ -109,6 +108,8 @@ class Model(nn.Module):
     def forward(self, input1,Mode = 'Normalized',ActivMode =False,DropoutP=0):
         BatchSize = input1.size(0)
         feat = self.block(self.input_norm(input1))
+        if ActivMode:
+            return None, feat
         spp_a = spatial_pyramid_pool(feat, BatchSize, [int(feat.size(2)), int(feat.size(3))], self.output_num)
 
         if Mode == 'NoFC':
