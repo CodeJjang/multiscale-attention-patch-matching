@@ -63,14 +63,16 @@ def create_optimizer(net, lr_rate, weight_decay):
 
 
 def train(net, train_dataloader, start_epoch, device, warmup_epochs, generator_mode, lr_rate, weight_decay,
-          writer, test_mode, evaluate_net_steps, models_dir, best_file_name, outer_batch_size, inner_batch_size,
-          optimizer, scheduler, scheduler_warmup, criterion, lowest_err, arch_desc, test_data, val_data, val_labels):
+          writer, evaluate_net_steps, models_dir, best_file_name, outer_batch_size, inner_batch_size,
+          optimizer, scheduler, scheduler_warmup, criterion, lowest_err, arch_desc, test_data, val_data, val_labels,
+          epochs, scheduler_patience):
     scaler = MyGradScaler()
 
-    for epoch in range(start_epoch, 100):
+    for epoch in range(start_epoch, epochs):
         optimizer.zero_grad()
+        is_warmup_phase = epoch - start_epoch < warmup_epochs
 
-        if epoch - start_epoch < warmup_epochs:
+        if is_warmup_phase:
             print('\n', colored('Warmup step #' + repr(epoch - start_epoch), 'green', attrs=['reverse', 'blink']))
             scheduler_warmup.step()
         else:
@@ -90,16 +92,15 @@ def train(net, train_dataloader, start_epoch, device, warmup_epochs, generator_m
         print('negative_mining_mode: ' + criterion.mode)
         print('generator_mode: ' + generator_mode)
 
-        finished_warmup = (criterion.mode == 'Random') and (
-                optimizer.param_groups[0]['lr'] <= (lr_rate / 1e3 + 1e-8)) \
-                          and (epoch - start_epoch > warmup_epochs)
-        if finished_warmup:
+        should_mine_hard_negatives = criterion.mode == 'Random' and \
+                                     optimizer.param_groups[0]['lr'] <= (lr_rate / 1e3 + 1e-8) and \
+                                     not is_warmup_phase
+        if should_mine_hard_negatives:
             print(colored('Switching Random->Hardest', 'green', attrs=['reverse', 'blink']))
             criterion = OnlineHardNegativeMiningTripletLoss(margin=1, mode='Hardest', device=device)
 
             optimizer = create_optimizer(net, lr_rate, weight_decay)
 
-            # start with warmup
             scheduler_warmup = GradualWarmupSchedulerV2(optimizer, multiplier=1, total_epoch=warmup_epochs)
             start_epoch = epoch
 
@@ -107,10 +108,11 @@ def train(net, train_dataloader, start_epoch, device, warmup_epochs, generator_m
                 scheduler = StepLR(optimizer, step_size=10, gamma=0.1)
 
             if type(scheduler).__name__ == 'ReduceLROnPlateau':
-                scheduler = ReduceLROnPlateau(optimizer, mode='min', factor=0.1, patience=3, verbose=True)
+                scheduler = ReduceLROnPlateau(optimizer, mode='min', factor=0.1, patience=scheduler_patience,
+                                              verbose=True)
 
         bar = tqdm(train_dataloader, 0, leave=False, total=math.ceil((len(train_dataloader) - 1) / inner_batch_size))
-        for i, data in enumerate(bar):
+        for batch_num, data in enumerate(bar):
 
             # zero the parameter gradients
             optimizer.zero_grad()
@@ -135,12 +137,13 @@ def train(net, train_dataloader, start_epoch, device, warmup_epochs, generator_m
             scaler.update()
 
             running_loss += loss.item()
+            if epoch >= 40:
+                evaluate_net_steps = 20
+            if (batch_num % evaluate_net_steps == 0 or batch_num * inner_batch_size >= len(train_dataloader) - 1) and \
+                    batch_num > 0:
 
-            if (((i % evaluate_net_steps == 0) or (i * inner_batch_size >= len(train_dataloader) - 1)) and (
-                    i > 0)) or test_mode:
-
-                if i > 0:
-                    running_loss /= i
+                if batch_num > 0:
+                    running_loss /= batch_num
 
                 net.eval()
                 val_err = 0
@@ -168,28 +171,29 @@ def train(net, train_dataloader, start_epoch, device, warmup_epochs, generator_m
                     lowest_err = total_test_err
 
                     print('\n', colored('Best error found and saved: ' + repr(total_test_err)[0:5], 'red',
-                                  attrs=['reverse', 'blink']))
+                                        attrs=['reverse', 'blink']))
                     filepath = os.path.join(models_dir, best_file_name + '.pth')
-                    torch.save(state, filepath)
+                    # torch.save(state, filepath)
                     save_best_model_stats(models_dir, epoch, total_test_err, test_data)
 
-                log = '[%d, %5d] Loss: %.3f' % (epoch, i, 100 * running_loss) + ' Val Error: ' + repr(val_err)[0:6]
+                log = '[%d, %5d] Loss: %.3f' % (epoch, batch_num, 100 * running_loss) + ' Val Error: ' + repr(val_err)[
+                                                                                                         0:6]
                 log += ' Test Error: ' + repr(total_test_err)[0:6]
                 print(log)
 
-                writer.add_scalar('Val Error', val_err, epoch * len(train_dataloader) + i)
-                writer.add_scalar('Test Error', total_test_err, epoch * len(train_dataloader) + i)
-                writer.add_scalar('Loss', 100 * running_loss, epoch * len(train_dataloader) + i)
+                writer.add_scalar('Val Error', val_err, epoch * len(train_dataloader) + batch_num)
+                writer.add_scalar('Test Error', total_test_err, epoch * len(train_dataloader) + batch_num)
+                writer.add_scalar('Loss', 100 * running_loss, epoch * len(train_dataloader) + batch_num)
                 writer.add_scalar('Learning Rate', optimizer.param_groups[0]['lr'],
-                                  epoch * len(train_dataloader) + i)
+                                  epoch * len(train_dataloader) + batch_num)
                 writer.add_text('Log', log)
                 writer.close()
 
                 # save epoch
                 filepath = models_dir + 'model_epoch_' + repr(epoch) + '.pth'
-                torch.save(state, filepath)
+                # torch.save(state, filepath)
 
-            if (i * inner_batch_size) > (len(train_dataloader) - 1):
+            if (batch_num * inner_batch_size) > (len(train_dataloader) - 1):
                 bar.clear()
                 bar.close()
                 break
@@ -199,7 +203,7 @@ def train(net, train_dataloader, start_epoch, device, warmup_epochs, generator_m
 
 def parse_args():
     parser = argparse.ArgumentParser(description='Train models for multimodal patch matching.')
-    parser.add_argument('--epochs', type=int, default=100, help='epochs')
+    parser.add_argument('--epochs', type=int, default=90, help='epochs')
     parser.add_argument('--artifacts', default='./artifacts', help='artifacts path')
     parser.add_argument('--exp-name', default='symmetric_enc_transformer_test_4', help='experiment name')
     parser.add_argument('--evaluate-every', type=int, default=100, help='evaluate network and print steps')
@@ -218,6 +222,8 @@ def parse_args():
     parser.add_argument('--weight-decay', type=float, default=0, help='weight decay')
     parser.add_argument('--dataset-name', default='visnir', help='dataset name')
     parser.add_argument('--dataset-path', default='visnir', help='dataset name')
+    parser.add_argument('--warmup-epochs', type=int, default=12, help='warmup epochs')
+    parser.add_argument('--scheduler-patience', type=int, default=5, help='scheduler patience epochs')
     return parser.parse_args()
 
 
@@ -246,13 +252,14 @@ def main():
     writer = SummaryWriter(logs_dirname)
     generator_mode = 'Pairwise'
     negative_mining_mode = 'Random'
-    test_mode = False
     skip_validation = args.skip_validation
     lr_rate = args.lr
     weight_decay = args.weight_decay
     dropout = args.dropout
     outer_batch_size = args.batch_size
     inner_batch_size = args.inner_batch_size
+    epochs = args.epochs
+    scheduler_patience = args.scheduler_patience
     augmentations = {
         "Test": False,
         "HorizontalFlip": True,
@@ -287,7 +294,7 @@ def main():
     net = MultiscaleTransformerEncoder(dropout)
     optimizer = create_optimizer(net, lr_rate, weight_decay)
     start_epoch = 0
-    lowest_err = 1e5
+    lowest_err = 1e10
     if args.continue_from_checkpoint:
         net, optimizer, lowest_err, start_epoch, scheduler, loaded_negative_mining_mode = load_model(net,
                                                                                                      start_best_model,
@@ -301,17 +308,18 @@ def main():
         net = nn.DataParallel(net)
     net.to(device)
 
-    scheduler = ReduceLROnPlateau(optimizer, mode='min', factor=0.1, patience=3, verbose=True)
+    scheduler = ReduceLROnPlateau(optimizer, mode='min', factor=0.1, patience=scheduler_patience, verbose=True)
 
-    warmup_epochs = 8
+    warmup_epochs = args.warmup_epochs
     scheduler_warmup = GradualWarmupSchedulerV2(optimizer, multiplier=1, total_epoch=warmup_epochs,
                                                 after_scheduler=StepLR(optimizer, step_size=3, gamma=0.1))
 
     criterion = OnlineHardNegativeMiningTripletLoss(margin=1, mode=negative_mining_mode, device=device)
 
     train(net, train_dataloader, start_epoch, device, warmup_epochs, generator_mode, lr_rate, weight_decay,
-          writer, test_mode, evaluate_net_steps, models_dir, best_file_name, outer_batch_size, inner_batch_size,
-          optimizer, scheduler, scheduler_warmup, criterion, lowest_err, arch_desc, test_data, val_data, val_labels)
+          writer, evaluate_net_steps, models_dir, best_file_name, outer_batch_size, inner_batch_size,
+          optimizer, scheduler, scheduler_warmup, criterion, lowest_err, arch_desc, test_data, val_data, val_labels,
+          epochs, scheduler_patience)
 
 
 if __name__ == '__main__':

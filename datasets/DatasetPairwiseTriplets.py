@@ -53,34 +53,34 @@ class DatasetPairwiseTriplets(Dataset):
 
         for i in range(0, pos_images.shape[0]):
 
-            # Flip LR
-            if (np.random.uniform(0, 1) > 0.5) and self.augmentations["HorizontalFlip"]:
+            # flip LR
+            if (np.random.uniform(0, 1) > 0.5) and self.augmentations.get("HorizontalFlip"):
                 pos1[i,] = np.fliplr(pos1[i,])
                 pos2[i,] = np.fliplr(pos2[i,])
 
             # flip UD
-            if (np.random.uniform(0, 1) > 0.5) and self.augmentations["VerticalFlip"]:
+            if (np.random.uniform(0, 1) > 0.5) and self.augmentations.get("VerticalFlip"):
                 pos1[i,] = np.flipud(pos1[i,])
                 pos2[i,] = np.flipud(pos2[i,])
 
             # test augmentations
-            if self.augmentations["Test"]:
+            if self.augmentations.get("Test"):
                 data = self.transform(image=pos1[i, :, :])
                 pos1[i,] = data['image']
                 pos2[i,] = A.ReplayCompose.replay(data['replay'], image=pos2[i, :, :])['image']
 
             # rotate
-            if self.augmentations["Rotate90"]:
+            if self.augmentations.get("Rotate90"):
                 idx = np.random.randint(low=0, high=4, size=1)[0]  # choose rotation
                 pos1[i,] = np.rot90(pos1[i,], idx)
                 pos2[i,] = np.rot90(pos2[i,], idx)
 
             # random crop
-            if (np.random.uniform(0, 1) > 0.5) & self.augmentations["RandomCrop"]['Do']:
-                dx = np.random.uniform(self.augmentations["RandomCrop"]['MinDx'],
-                                       self.augmentations["RandomCrop"]['MaxDx'])
-                dy = np.random.uniform(self.augmentations["RandomCrop"]['MinDy'],
-                                       self.augmentations["RandomCrop"]['MaxDy'])
+            if (np.random.uniform(0, 1) > 0.5) & self.augmentations.get("RandomCrop", {}).get('Do'):
+                dx = np.random.uniform(self.augmentations.get("RandomCrop", {}).get('MinDx'),
+                                       self.augmentations.get("RandomCrop", {}).get('MaxDx'))
+                dy = np.random.uniform(self.augmentations.get("RandomCrop", {}).get('MinDy'),
+                                       self.augmentations.get("RandomCrop", {}).get('MaxDy'))
 
                 dx = dy
 

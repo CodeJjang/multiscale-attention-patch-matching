@@ -11,7 +11,7 @@ import numpy as np
 import torch
 import torch.nn as nn
 
-from networks.PatchMatchingNetwork import PatchMatchingNetwork
+from networks.MultiscaleTransformerEncoder import MultiscaleTransformerEncoder
 from util.utils import load_model, normalize_image, evaluate_network
 
 warnings.filterwarnings("ignore", message="UserWarning: albumentations.augmentations.transforms.RandomResizedCrop")
@@ -158,7 +158,7 @@ def main():
     best_fname = 'best_model'
 
     output_attention_weights = True
-    net = PatchMatchingNetwork(output_attention_weights)
+    net = MultiscaleTransformerEncoder(output_attention_weights)
 
     net, optimizer, LowestError, StartEpoch, scheduler, LodedNegativeMiningMode = load_model(net, True,
                                                                                              models_dir_name,

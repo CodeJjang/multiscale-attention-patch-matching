@@ -77,11 +77,11 @@ class MultiscaleTransformerEncoder(nn.Module):
 
                 enc_output = self.encoder(src=seq, pos=pos_encoding)
 
-                seq = enc_output[0,]
+                cls_token = enc_output[0,]
                 if self.output_attention_weights and i == 1:
                     attention_weights = enc_output[1:].transpose(1, 0)
 
-                spp = torch.cat((spp, seq.reshape(num_sample, -1)), 1)
+                spp = torch.cat((spp, cls_token.reshape(num_sample, -1)), 1)
 
         if self.output_attention_weights:
             return spp, attention_weights

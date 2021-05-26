@@ -140,20 +140,18 @@ def save_best_model_stats(dir, epoch, test_err, test_data):
         json.dump(content, f, ensure_ascii=False, indent=4)
 
 
-def FPR95Accuracy(Dist, Labels):
-    PosIdx = np.squeeze(np.asarray(np.where(Labels == 1)))
-    NegIdx = np.squeeze(np.asarray(np.where(Labels == 0)))
+def FPR95Accuracy(dist_mat, labels):
+    pos_indices = np.squeeze(np.asarray(np.where(labels == 1)))
+    neg_indices = np.squeeze(np.asarray(np.where(labels == 0)))
 
-    NegDist = Dist[NegIdx]
-    PosDist = np.sort(Dist[PosIdx])
+    neg_dists = dist_mat[neg_indices]
+    pos_dists = np.sort(dist_mat[pos_indices])
 
-    Val = PosDist[int(0.95 * PosDist.shape[0])]
+    thresh = pos_dists[int(0.95 * pos_dists.shape[0])]
 
-    FalsePos = sum(NegDist < Val);
+    fp = sum(neg_dists < thresh)
 
-    FPR95Accuracy = FalsePos / float(NegDist.shape[0])
-
-    return FPR95Accuracy
+    return fp / float(neg_dists.shape[0])
 
 
 def FPR95Threshold(PosDist):
@@ -234,14 +232,13 @@ def evaluate_test(net, test_data, device, step_size=800):
     samples_amount = 0
     total_test_err = 0
     for dataset_name in test_data:
-        emb = evaluate_network(net, test_data[dataset_name]['Data'][:, :, :, :, 0],
-                               test_data[dataset_name]['Data'][:, :, :, :, 1], device,
-                               step_size)
+        dataset = test_data[dataset_name]
+        emb = evaluate_network(net, dataset['Data'][:, :, :, :, 0], dataset['Data'][:, :, :, :, 1], device, step_size)
 
         dist = np.power(emb['Emb1'] - emb['Emb2'], 2).sum(1)
-        test_data[dataset_name]['TestError'] = FPR95Accuracy(dist, test_data[dataset_name]['Labels'][:]) * 100
-        total_test_err += test_data[dataset_name]['TestError'] * test_data[dataset_name]['Data'].shape[0]
-        samples_amount += test_data[dataset_name]['Data'].shape[0]
+        dataset['TestError'] = FPR95Accuracy(dist, dataset['Labels']) * 100
+        total_test_err += dataset['TestError'] * dataset['Data'].shape[0]
+        samples_amount += dataset['Data'].shape[0]
     total_test_err /= samples_amount
 
     del emb
