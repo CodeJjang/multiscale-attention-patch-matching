@@ -222,8 +222,8 @@ def parse_args():
     parser.add_argument('--weight-decay', type=float, default=0, help='weight decay')
     parser.add_argument('--dataset-name', default='visnir', help='dataset name')
     parser.add_argument('--dataset-path', default='visnir', help='dataset name')
-    parser.add_argument('--warmup-epochs', type=int, default=12, help='warmup epochs')
-    parser.add_argument('--scheduler-patience', type=int, default=5, help='scheduler patience epochs')
+    parser.add_argument('--warmup-epochs', type=int, default=14, help='warmup epochs')
+    parser.add_argument('--scheduler-patience', type=int, default=6, help='scheduler patience epochs')
     return parser.parse_args()
 
 
