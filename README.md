@@ -29,4 +29,5 @@ Run the following command:
 python train.py --dataset-name=visnir --dataset-path=<visnir_downloaded_path>
 ```
 
-For further configurations run `-h` with the above command.
+For further configurations run `-h` with the above command.  
+You may need to set `num_workers` to 0 in the train dataloader when training on UBC, depending on your hardware.
