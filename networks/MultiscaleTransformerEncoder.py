@@ -11,7 +11,8 @@ from networks.transformer import TransformerEncoderLayer, TransformerEncoder
 
 class MultiscaleTransformerEncoder(nn.Module):
 
-    def __init__(self, dropout, encoder_dim=128, pos_encoding_dim=20, output_attention_weights=False):
+    def __init__(self, dropout, encoder_dim=128, pos_encoding_dim=20,
+                 output_attention_weights=False, output_encoder_embeddings=False):
         super(MultiscaleTransformerEncoder, self).__init__()
 
         self.backbone_cnn = BackboneCNN(output_feat_map=True, dropout=dropout)
@@ -34,9 +35,16 @@ class MultiscaleTransformerEncoder(nn.Module):
                                                      dropout=0.1, activation="relu", normalize_before=False)
         self.encoder = TransformerEncoder(encoder_layer=self.encoder_layer, num_layers=encoder_layers)
 
-        # self.SPP_FC = nn.Linear(8576, encoder_dim) # for [8,4,2,1] SPP
-        self.SPP_FC = nn.Linear(8704, encoder_dim)  # for [8,8,4,2,1] SPP
+        self.output_encoder_embeddings = output_encoder_embeddings
         self.output_attention_weights = output_attention_weights
+
+        spp_dim = 8704
+        if not output_encoder_embeddings:
+            # self.SPP_FC = nn.Linear(8576, encoder_dim) # for [8,4,2,1] SPP
+            self.SPP_FC = nn.Linear(spp_dim, encoder_dim)  # for [8,8,4,2,1] SPP
+            self.output_dim = encoder_dim
+        else:
+            self.output_dim = spp_dim
 
     def encoder_spp(self, previous_conv, num_sample, previous_conv_size):
         attention_weights = []
@@ -98,6 +106,9 @@ class MultiscaleTransformerEncoder(nn.Module):
             attention_weights = spp_result[1]
         else:
             spp_activations = spp_result
+
+        if self.output_encoder_embeddings:
+            return spp_activations
 
         res = self.SPP_FC(spp_activations)
         res = F.normalize(res, dim=1, p=2)
