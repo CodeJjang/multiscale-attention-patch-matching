@@ -1,5 +1,6 @@
 import glob
 import json
+import logging
 import os
 
 import numpy as np
@@ -27,10 +28,10 @@ def load_model(net, start_best_model, models_dirname, best_filename, use_best_sc
 
         if load_epoch is not None:
             model_path = models_dirname + 'model_epoch_%s.pth' % load_epoch
-            print('%s loaded' % model_path)
+            logging.info(f'{model_path} loaded')
             checkpoint = torch.load(model_path)
         else:
-            print(flist[-1] + ' loaded')
+            logging.info(f'{flist[-1]} loaded')
             checkpoint = torch.load(flist[-1])
 
         if ('lowest_err' in checkpoint.keys()) and use_best_score:
@@ -54,8 +55,8 @@ def load_model(net, start_best_model, models_dirname, best_filename, use_best_sc
                         if isinstance(v, torch.Tensor):
                             state[k] = v.cuda(device)
             except Exception as e:
-                print(e)
-                print('Optimizer loading error')
+                logging.error(e)
+                logging.error('Optimizer loading error')
 
         if ('scheduler_name' in checkpoint.keys()) and (optimizer != None):
 
@@ -188,7 +189,7 @@ def evaluate_network(net, data1, data2, device, step_size=800):
     return emb
 
 
-def load_test_datasets(test_dir):
+def load_test_datasets(test_dir, debug):
     file_list = glob.glob(test_dir + "*.hdf5")
     test_data = dict()
     for f in file_list:
@@ -211,6 +212,8 @@ def load_test_datasets(test_dir):
         test_data[dataset_name]['Data'] = x
         test_data[dataset_name]['Labels'] = test_labels
         del x
+        if debug:
+            break
     return test_data
 
 

@@ -1,6 +1,8 @@
 import argparse
+import logging
 import math
 import os
+import sys
 import warnings
 from pathlib import Path
 
@@ -15,6 +17,7 @@ from tqdm import tqdm
 
 from datasets.DatasetPairwiseTriplets import DatasetPairwiseTriplets
 from networks.MultiscaleTransformerEncoder import MultiscaleTransformerEncoder
+from networks.SimSiam import SimSiam
 from networks.losses import OnlineHardNegativeMiningTripletLoss
 from util.read_hdf5_data import read_hdf5_data
 from util.utils import load_model, MultiEpochsDataLoader, MyGradScaler, save_best_model_stats, evaluate_test, \
@@ -73,7 +76,7 @@ def train(net, train_dataloader, start_epoch, device, warmup_epochs, generator_m
         is_warmup_phase = epoch - start_epoch < warmup_epochs
 
         if is_warmup_phase:
-            print('\n', colored('Warmup step #' + repr(epoch - start_epoch), 'green', attrs=['reverse', 'blink']))
+            logging.info('\n' + colored('Warmup step #' + repr(epoch - start_epoch), 'green', attrs=['reverse', 'blink']))
             scheduler_warmup.step()
         else:
             if epoch > start_epoch:
@@ -87,16 +90,17 @@ def train(net, train_dataloader, start_epoch, device, warmup_epochs, generator_m
         log = 'LR: '
         for param_group in optimizer.param_groups:
             log += repr(param_group['lr']) + ' '
-        print('\n', colored(log, 'blue', attrs=['reverse', 'blink']))
+        logging.info('\n' + colored(log, 'blue', attrs=['reverse', 'blink']))
 
-        print('negative_mining_mode: ' + criterion.mode)
-        print('generator_mode: ' + generator_mode)
+        logging.info(f'negative_mining_mode: {criterion.mode}')
+        logging.info(f'generator_mode: {generator_mode}')
 
         should_mine_hard_negatives = criterion.mode == 'Random' and \
                                      optimizer.param_groups[0]['lr'] <= (lr_rate / 1e3 + 1e-8) and \
                                      not is_warmup_phase
+        should_mine_hard_negatives = False
         if should_mine_hard_negatives:
-            print(colored('Switching Random->Hardest', 'green', attrs=['reverse', 'blink']))
+            logging.info(colored('Switching Random->Hardest', 'green', attrs=['reverse', 'blink']))
             criterion = OnlineHardNegativeMiningTripletLoss(margin=1, mode='Hardest', device=device)
 
             optimizer = create_optimizer(net, lr_rate, weight_decay)
@@ -130,7 +134,8 @@ def train(net, train_dataloader, start_epoch, device, warmup_epochs, generator_m
 
             emb = net(pos1, pos2)
 
-            loss = criterion(emb['Emb1'], emb['Emb2']) + criterion(emb['Emb2'], emb['Emb1'])
+            # loss = criterion(emb['Emb1'], emb['Emb2']) + criterion(emb['Emb2'], emb['Emb1'])
+            loss = emb.mean()
 
             scaler.scale(loss).backward()
             scaler.step(optimizer)
@@ -170,7 +175,7 @@ def train(net, train_dataloader, start_epoch, device, warmup_epochs, generator_m
                 if total_test_err < lowest_err:
                     lowest_err = total_test_err
 
-                    print('\n', colored('Best error found and saved: ' + repr(total_test_err)[0:5], 'red',
+                    logging.info('\n' + colored('Best error found and saved: ' + repr(total_test_err)[0:5], 'red',
                                         attrs=['reverse', 'blink']))
                     filepath = os.path.join(models_dir, best_file_name + '.pth')
                     # torch.save(state, filepath)
@@ -179,12 +184,12 @@ def train(net, train_dataloader, start_epoch, device, warmup_epochs, generator_m
                 log = '[%d, %5d] Loss: %.3f' % (epoch, batch_num, 100 * running_loss) + ' Val Error: ' + repr(val_err)[
                                                                                                          0:6]
                 log += ' Test Error: ' + repr(total_test_err)[0:6]
-                print(log)
+                logging.info(log)
 
-                writer.add_scalar('Val Error', val_err, epoch * len(train_dataloader) + batch_num)
-                writer.add_scalar('Test Error', total_test_err, epoch * len(train_dataloader) + batch_num)
+                writer.add_scalar('Val_Error', val_err, epoch * len(train_dataloader) + batch_num)
+                writer.add_scalar('Test_Error', total_test_err, epoch * len(train_dataloader) + batch_num)
                 writer.add_scalar('Loss', 100 * running_loss, epoch * len(train_dataloader) + batch_num)
-                writer.add_scalar('Learning Rate', optimizer.param_groups[0]['lr'],
+                writer.add_scalar('Learning_Rate', optimizer.param_groups[0]['lr'],
                                   epoch * len(train_dataloader) + batch_num)
                 writer.add_text('Log', log)
                 writer.close()
@@ -198,7 +203,7 @@ def train(net, train_dataloader, start_epoch, device, warmup_epochs, generator_m
                 bar.close()
                 break
 
-    print('Finished Training')
+    logging.info('Finished Training')
 
 
 def parse_args():
@@ -206,7 +211,7 @@ def parse_args():
     parser.add_argument('--epochs', type=int, default=90, help='epochs')
     parser.add_argument('--artifacts', default='./artifacts', help='artifacts path')
     parser.add_argument('--exp-name', default='symmetric_enc_transformer_test_4', help='experiment name')
-    parser.add_argument('--evaluate-every', type=int, default=100, help='evaluate network and print steps')
+    parser.add_argument('--evaluate-every', type=int, default=100, help='evaluate network and log steps')
     parser.add_argument('--skip-validation', type=bool, const=True, default=False,
                         help='whether to skip validation evaluation', nargs='?')
     parser.add_argument('--continue-from-checkpoint', type=bool, const=True, default=False,
@@ -224,6 +229,8 @@ def parse_args():
     parser.add_argument('--dataset-path', default='visnir', help='dataset name')
     parser.add_argument('--warmup-epochs', type=int, default=14, help='warmup epochs')
     parser.add_argument('--scheduler-patience', type=int, default=6, help='scheduler patience epochs')
+    parser.add_argument('--debug', type=bool, const=True, default=False,
+                        nargs='?', help='debug mode')
     return parser.parse_args()
 
 
@@ -235,10 +242,23 @@ def main():
     gpus_num = torch.cuda.device_count()
     torch.cuda.empty_cache()
     GPUtil.showUtilization()
-    print('Using', device)
 
-    models_dir = os.path.join(args.artifacts, args.exp_name, 'models')
-    logs_dirname = os.path.join(args.artifacts, args.exp_name, 'logs')
+    experiment_dir = os.path.join(args.artifacts, args.exp_name)
+    assert_dir(experiment_dir)
+
+    logging.basicConfig(
+        level=logging.INFO,
+        format="%(asctime)s [%(levelname)s] %(message)s",
+        handlers=[
+            logging.FileHandler("{0}/{1}.log".format(experiment_dir, 'logs')),
+            logging.StreamHandler()
+        ]
+    )
+
+    logging.info(f'Using {device}')
+
+    models_dir = os.path.join(experiment_dir, 'models')
+    logs_dirname = os.path.join(experiment_dir, 'logs')
     arch_desc = 'Symmetric CNN with Triplet loss and transformer encoder'
     best_file_name = 'best_model'
 
@@ -284,14 +304,22 @@ def main():
     train_data = np.squeeze(train_data[train_indices,])
     train_labels = train_labels[train_indices]
 
+    if args.debug:
+        train_data = train_data[:100]
+        train_labels = train_labels[:100]
+        epochs = 1
+        outer_batch_size = 10
+        evaluate_net_steps = 50
+
     train_dataset = DatasetPairwiseTriplets(train_data, train_labels, inner_batch_size, augmentations,
                                             generator_mode)
     train_dataloader = MultiEpochsDataLoader(train_dataset, batch_size=outer_batch_size, shuffle=True,
                                              num_workers=8, pin_memory=True)
 
-    test_data = load_test_datasets(test_dir)
+    test_data = load_test_datasets(test_dir, args.debug)
 
-    net = MultiscaleTransformerEncoder(dropout)
+    net = SimSiam(backbone=MultiscaleTransformerEncoder(dropout, output_encoder_embeddings=True))
+    # net = MultiscaleTransformerEncoder(dropout)
     optimizer = create_optimizer(net, lr_rate, weight_decay)
     start_epoch = 0
     lowest_err = 1e10
@@ -304,7 +332,7 @@ def main():
                                                                                                      device)
 
     if gpus_num > 1:
-        print("Using", torch.cuda.device_count(), "GPUs")
+        logging.info(f"Using {torch.cuda.device_count()} GPUs")
         net = nn.DataParallel(net)
     net.to(device)
 

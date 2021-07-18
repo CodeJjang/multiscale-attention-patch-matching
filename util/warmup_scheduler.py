@@ -1,3 +1,5 @@
+import logging
+
 from torch.optim.lr_scheduler import ReduceLROnPlateau
 from torch.optim.lr_scheduler import _LRScheduler
 
@@ -36,7 +38,7 @@ class GradualWarmupScheduler(_LRScheduler):
             log = '\n LR: '
             for x in res:
                 log += repr(x) + ' '
-            print(log)
+            logging.info(log)
             return res
         else:
             return [base_lr * ((self.multiplier - 1.) * self.last_epoch / self.total_epoch + 1.) for base_lr in
