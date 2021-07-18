@@ -1,3 +1,5 @@
+import logging
+
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
@@ -181,7 +183,7 @@ class OnlineHardNegativeMiningTripletLoss(nn.Module):
             losses = losses[idx].mean()
 
             if torch.isnan(losses):
-                print('Found nan in loss ')
+                logging.error('Found nan in loss ')
         else:
             losses = 0
 
@@ -255,3 +257,11 @@ class FPRLoss(nn.Module):
         losses = distance_positive.mean() - distance_negative.mean()
 
         return losses
+
+
+class ContrastiveLoss(nn.Module):
+    def __init__(self):
+        super(ContrastiveLoss, self).__init__()
+
+    def forward(self, predictor_output, encoder_output):
+        return - F.cosine_similarity(predictor_output, encoder_output.detach(), dim=-1).mean()
