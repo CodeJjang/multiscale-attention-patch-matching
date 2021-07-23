@@ -22,7 +22,7 @@ from networks.losses import OnlineHardNegativeMiningTripletLoss
 from util.read_hdf5_data import read_hdf5_data
 from util.utils import load_model, MultiEpochsDataLoader, MyGradScaler, save_best_model_stats, evaluate_test, \
     load_test_datasets, evaluate_validation, load_validation_set
-from util.warmup_scheduler import GradualWarmupSchedulerV2
+from util.schedulers import GradualWarmupSchedulerV2, CosineScheduler
 
 warnings.filterwarnings("ignore", message="UserWarning: albumentations.augmentations.transforms.RandomResizedCrop")
 
@@ -56,13 +56,28 @@ def load_datasets_paths(ds_name, ds_path):
     return train_file, test_dir
 
 
-def create_optimizer(net, lr_rate, weight_decay):
-    return torch.optim.Adam(
-        [{'params': filter(lambda p: p.requires_grad == True, net.parameters()), 'lr': lr_rate,
-          'weight_decay': weight_decay},
-         {'params': filter(lambda p: p.requires_grad == False, net.parameters()), 'lr': 0,
-          'weight_decay': 0}],
-        lr=0, weight_decay=0)
+def create_optimizer(net, lr_rate, weight_decay=1e-4, momentum=0.9, name='Adam'):
+    if name == 'Adam':
+        return torch.optim.Adam(
+            [{'params': filter(lambda p: p.requires_grad == True, net.parameters()), 'lr': lr_rate,
+              'weight_decay': weight_decay},
+             {'params': filter(lambda p: p.requires_grad == False, net.parameters()), 'lr': 0,
+              'weight_decay': 0}],
+            lr=0, weight_decay=0)
+    elif name == 'SGD':
+        predictor_prefix = ('module.predictor', 'predictor')
+        parameters = [{
+            'name': 'base',
+            'params': [param for name, param in net.named_parameters() if not name.startswith(predictor_prefix)],
+            'lr': lr_rate
+        }, {
+            'name': 'predictor',
+            'params': [param for name, param in net.named_parameters() if name.startswith(predictor_prefix)],
+            'lr': lr_rate
+        }]
+        return torch.optim.SGD(parameters, lr=lr_rate, momentum=momentum, weight_decay=weight_decay)
+    else:
+        raise Exception('Unknown optimizer name supplied')
 
 
 def train(net, train_dataloader, start_epoch, device, warmup_epochs, generator_mode, lr_rate, weight_decay,
@@ -80,11 +95,10 @@ def train(net, train_dataloader, start_epoch, device, warmup_epochs, generator_m
             scheduler_warmup.step()
         else:
             if epoch > start_epoch:
-                if type(scheduler).__name__ == 'StepLR':
-                    scheduler.step()
-
                 if type(scheduler).__name__ == 'ReduceLROnPlateau':
                     scheduler.step(total_test_err)
+                else:
+                    scheduler.step()
         running_loss = 0
 
         log = 'LR: '
@@ -307,7 +321,7 @@ def main():
     if args.debug:
         train_data = train_data[:100]
         train_labels = train_labels[:100]
-        epochs = 1
+        epochs = 2
         outer_batch_size = 10
         evaluate_net_steps = 50
 
@@ -320,7 +334,9 @@ def main():
 
     net = SimSiam(backbone=MultiscaleTransformerEncoder(dropout, output_encoder_embeddings=True))
     # net = MultiscaleTransformerEncoder(dropout)
-    optimizer = create_optimizer(net, lr_rate, weight_decay)
+    # optimizer = create_optimizer(net, lr_rate, weight_decay)
+    optimizer = create_optimizer(net, lr_rate=0.05*outer_batch_size/256, name='SGD')
+
     start_epoch = 0
     lowest_err = 1e10
     if args.continue_from_checkpoint:
@@ -336,11 +352,20 @@ def main():
         net = nn.DataParallel(net)
     net.to(device)
 
-    scheduler = ReduceLROnPlateau(optimizer, mode='min', factor=0.1, patience=scheduler_patience, verbose=True)
+    # scheduler = ReduceLROnPlateau(optimizer, mode='min', factor=0.1, patience=scheduler_patience, verbose=True)
 
     warmup_epochs = args.warmup_epochs
     scheduler_warmup = GradualWarmupSchedulerV2(optimizer, multiplier=1, total_epoch=warmup_epochs,
                                                 after_scheduler=StepLR(optimizer, step_size=3, gamma=0.1))
+
+    scheduler = CosineScheduler(
+        optimizer,
+        warmup_epochs=10, warmup_lr=1e-1,
+        num_epochs=epochs, base_lr=0.05*outer_batch_size/256, final_lr=0*outer_batch_size/256,
+        iter_per_epoch=len(train_dataloader),
+        constant_predictor_lr=True
+    )
+    warmup_epochs = 0
 
     criterion = OnlineHardNegativeMiningTripletLoss(margin=1, mode=negative_mining_mode, device=device)
 
