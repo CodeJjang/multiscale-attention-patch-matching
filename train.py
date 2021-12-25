@@ -18,11 +18,12 @@ from tqdm import tqdm
 from datasets.DatasetPairwiseTriplets import DatasetPairwiseTriplets
 from networks.MultiscaleTransformerEncoder import MultiscaleTransformerEncoder
 from networks.SimSiam import SimSiam
-from networks.losses import OnlineHardNegativeMiningTripletLoss
+from networks.losses import OnlineHardNegativeMiningTripletLoss, OnlineContrastiveLoss
 from util.read_hdf5_data import read_hdf5_data
 from util.utils import load_model, MultiEpochsDataLoader, MyGradScaler, save_best_model_stats, evaluate_test, \
     load_test_datasets, evaluate_validation, load_validation_set
 from util.schedulers import GradualWarmupSchedulerV2, CosineScheduler
+from torchvision.models import resnet50
 
 warnings.filterwarnings("ignore", message="UserWarning: albumentations.augmentations.transforms.RandomResizedCrop")
 
@@ -112,7 +113,7 @@ def train(net, train_dataloader, start_epoch, device, warmup_epochs, generator_m
         should_mine_hard_negatives = criterion.mode == 'Random' and \
                                      optimizer.param_groups[0]['lr'] <= (lr_rate / 1e3 + 1e-8) and \
                                      not is_warmup_phase
-        should_mine_hard_negatives = False
+        # should_mine_hard_negatives = False
         if should_mine_hard_negatives:
             logging.info(colored('Switching Random->Hardest', 'green', attrs=['reverse', 'blink']))
             criterion = OnlineHardNegativeMiningTripletLoss(margin=1, mode='Hardest', device=device)
@@ -148,16 +149,16 @@ def train(net, train_dataloader, start_epoch, device, warmup_epochs, generator_m
 
             emb = net(pos1, pos2)
 
-            # loss = criterion(emb['Emb1'], emb['Emb2']) + criterion(emb['Emb2'], emb['Emb1'])
-            loss = emb.mean()
+            loss = criterion(emb['Emb1'], emb['Emb2']) + criterion(emb['Emb2'], emb['Emb1'])
+            # loss = emb.mean()
 
             scaler.scale(loss).backward()
             scaler.step(optimizer)
             scaler.update()
 
             running_loss += loss.item()
-            if epoch >= 40:
-                evaluate_net_steps = 20
+            # if epoch >= 40:
+            #     evaluate_net_steps = 20
             if (batch_num % evaluate_net_steps == 0 or batch_num * inner_batch_size >= len(train_dataloader) - 1) and \
                     batch_num > 0:
 
@@ -258,6 +259,9 @@ def main():
     GPUtil.showUtilization()
 
     experiment_dir = os.path.join(args.artifacts, args.exp_name)
+    if args.debug:
+        experiment_dir += '_debug'
+
     assert_dir(experiment_dir)
 
     logging.basicConfig(
@@ -299,7 +303,7 @@ def main():
         "HorizontalFlip": True,
         "Rotate90": True,
         "VerticalFlip": False,
-        "RandomCrop": {'Do': False}
+        "RandomCrop": {'Do': False, 'MinDx': 0, 'MaxDx': 0.2, 'MinDy': 0, 'MaxDy': 0.2}
     }
     evaluate_net_steps = args.evaluate_every
 
@@ -319,8 +323,8 @@ def main():
     train_labels = train_labels[train_indices]
 
     if args.debug:
-        train_data = train_data[:100]
-        train_labels = train_labels[:100]
+        train_data = train_data[:1000]
+        train_labels = train_labels[:1000]
         epochs = 2
         outer_batch_size = 10
         evaluate_net_steps = 50
@@ -331,11 +335,15 @@ def main():
                                              num_workers=8, pin_memory=True)
 
     test_data = load_test_datasets(test_dir, args.debug)
+    # test_data = load_test_datasets(test_dir, debug=True)
 
     net = SimSiam(backbone=MultiscaleTransformerEncoder(dropout, output_encoder_embeddings=True))
+    # resnet = resnet50()
+    # resnet.conv1 = nn.Conv2d(1, 64, kernel_size=7, stride=2, padding=3, bias=False)
+    # net = SimSiam(backbone=resnet)
     # net = MultiscaleTransformerEncoder(dropout)
-    # optimizer = create_optimizer(net, lr_rate, weight_decay)
-    optimizer = create_optimizer(net, lr_rate=0.05*outer_batch_size/256, name='SGD')
+    optimizer = create_optimizer(net, lr_rate, weight_decay)
+    # optimizer = create_optimizer(net, lr_rate=0.05*outer_batch_size/256, name='SGD')
 
     start_epoch = 0
     lowest_err = 1e10
@@ -352,22 +360,24 @@ def main():
         net = nn.DataParallel(net)
     net.to(device)
 
-    # scheduler = ReduceLROnPlateau(optimizer, mode='min', factor=0.1, patience=scheduler_patience, verbose=True)
+    scheduler = ReduceLROnPlateau(optimizer, mode='min', factor=0.1, patience=scheduler_patience, verbose=True)
 
     warmup_epochs = args.warmup_epochs
     scheduler_warmup = GradualWarmupSchedulerV2(optimizer, multiplier=1, total_epoch=warmup_epochs,
                                                 after_scheduler=StepLR(optimizer, step_size=3, gamma=0.1))
 
-    scheduler = CosineScheduler(
-        optimizer,
-        warmup_epochs=10, warmup_lr=1e-1,
-        num_epochs=epochs, base_lr=0.05*outer_batch_size/256, final_lr=0*outer_batch_size/256,
-        iter_per_epoch=len(train_dataloader),
-        constant_predictor_lr=True
-    )
-    warmup_epochs = 0
+    # scheduler = CosineScheduler(
+    #     optimizer,
+    #     warmup_epochs=10, warmup_lr=1e-1,
+    #     num_epochs=epochs, base_lr=0.05*outer_batch_size/256, final_lr=0*outer_batch_size/256,
+    #     iter_per_epoch=len(train_dataloader),
+    #     constant_predictor_lr=True
+    # )
+    # warmup_epochs = 0
 
     criterion = OnlineHardNegativeMiningTripletLoss(margin=1, mode=negative_mining_mode, device=device)
+    # criterion = OnlineContrastiveLoss(margin=1, device=device)
+    # criterion = None
 
     train(net, train_dataloader, start_epoch, device, warmup_epochs, generator_mode, lr_rate, weight_decay,
           writer, evaluate_net_steps, models_dir, best_file_name, outer_batch_size, inner_batch_size,

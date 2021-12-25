@@ -237,9 +237,9 @@ def evaluate_test(net, test_data, device, step_size=800):
     for dataset_name in test_data:
         dataset = test_data[dataset_name]
         emb = evaluate_network(net, dataset['Data'][:, :, :, :, 0], dataset['Data'][:, :, :, :, 1], device, step_size)
-
         dist = np.power(emb['Emb1'] - emb['Emb2'], 2).sum(1)
         dataset['TestError'] = FPR95Accuracy(dist, dataset['Labels']) * 100
+        del dist
         total_test_err += dataset['TestError'] * dataset['Data'].shape[0]
         samples_amount += dataset['Data'].shape[0]
     total_test_err /= samples_amount

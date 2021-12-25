@@ -98,24 +98,38 @@ class MultiscaleTransformerEncoder(nn.Module):
     def forward_one(self, x):
 
         activ_map = self.backbone_cnn(x)
+        # Pooling support
+        h_wid = int(math.ceil(activ_map.size(2) / 8))
+        w_wid = int(math.ceil(activ_map.size(3) / 8))
 
-        spp_result = self.encoder_spp(activ_map, x.size(0),
-                                      [int(activ_map.size(2)), int(activ_map.size(3))])
-        if self.output_attention_weights:
-            spp_activations = spp_result[0]
-            attention_weights = spp_result[1]
-        else:
-            spp_activations = spp_result
+        # Padding to retain orthogonal dimensions
+        h_pad = int((h_wid * 8 - activ_map.size(2) + 1) / 2)
+        w_pad = int((w_wid * 8 - activ_map.size(3) + 1) / 2)
 
-        if self.output_encoder_embeddings:
-            return spp_activations
+        # apply pooling
+        maxpool = nn.MaxPool2d((h_wid, w_wid), stride=(h_wid, w_wid), padding=(h_pad, w_pad))
 
-        res = self.SPP_FC(spp_activations)
-        res = F.normalize(res, dim=1, p=2)
+        activ_map = maxpool(activ_map)
+        activ_map = activ_map.reshape(activ_map.shape[0], -1)
+        return activ_map
 
-        if self.output_attention_weights:
-            return res, attention_weights
-        return res
+        # spp_result = self.encoder_spp(activ_map, x.size(0),
+        #                               [int(activ_map.size(2)), int(activ_map.size(3))])
+        # if self.output_attention_weights:
+        #     spp_activations = spp_result[0]
+        #     attention_weights = spp_result[1]
+        # else:
+        #     spp_activations = spp_result
+        #
+        # if self.output_encoder_embeddings:
+        #     return spp_activations
+        #
+        # res = self.SPP_FC(spp_activations)
+        # res = F.normalize(res, dim=1, p=2)
+        #
+        # if self.output_attention_weights:
+        #     return res, attention_weights
+        # return res
 
     def forward(self, x1, x2):
         res = dict()
