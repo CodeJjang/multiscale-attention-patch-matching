@@ -2,6 +2,8 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
+from util.adain import calc_mean_std
+
 
 def sim_matrix(a, b, eps=1e-8):
     """
@@ -255,3 +257,18 @@ class FPRLoss(nn.Module):
         losses = distance_positive.mean() - distance_negative.mean()
 
         return losses
+
+def calc_style_loss_per_feat(input, target):
+    assert (input.size() == target.size())
+    # assert (target.requires_grad is False)
+    input_mean, input_std = calc_mean_std(input)
+    target_mean, target_std = calc_mean_std(target)
+    return nn.MSELoss()(input_mean, target_mean) + \
+           nn.MSELoss()(input_std, target_std)
+
+def calc_style_loss(content_feats, style_feats):
+    loss_s = calc_style_loss_per_feat(content_feats[0], style_feats[0])
+    for i in range(1, 4): # (1, 8)
+        loss_s += calc_style_loss_per_feat(content_feats[i], style_feats[i])
+
+    return loss_s

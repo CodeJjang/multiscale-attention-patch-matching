@@ -1,12 +1,14 @@
 import math
 
 import torch
+import torch.utils.checkpoint
 from torch import nn as nn
 from torch.nn import functional as F
 
 from networks.BackboneCNN import BackboneCNN
 from networks.positional_encodings import prepare_2d_pos_encodings
 from networks.transformer import TransformerEncoderLayer, TransformerEncoder
+from util.adain import adain
 
 
 class MultiscaleTransformerEncoder(nn.Module):
@@ -76,6 +78,7 @@ class MultiscaleTransformerEncoder(nn.Module):
                 seq = torch.cat((query, seq), 0)
 
                 enc_output = self.encoder(src=seq, pos=pos_encoding)
+                # enc_output = torch.utils.checkpoint.checkpoint(self.encoder, seq, None, None, pos_encoding)
 
                 cls_token = enc_output[0,]
                 if self.output_attention_weights and i == 1:
@@ -87,11 +90,37 @@ class MultiscaleTransformerEncoder(nn.Module):
             return spp, attention_weights
         return spp
 
+    def forward_two(self, x1, x2):
+
+        activ_maps1, activ_maps2 = self.backbone_cnn(x1), self.backbone_cnn(x2)
+        # activ_maps1[-1] = adain(content_feat=activ_maps1[-1], style_feat=activ_maps2[-1])
+        # activ_maps2[-1] = adain(content_feat=activ_maps2[-1], style_feat=activ_maps1[-1])
+        res = {}
+        for i, activ_map in enumerate([activ_maps1, activ_maps2]):
+            # activ_map = activ_maps[-1]
+
+            spp_result = self.encoder_spp(activ_map, activ_map.size(0),
+                                          [int(activ_map.size(2)), int(activ_map.size(3))])
+            if self.output_attention_weights:
+                spp_activations = spp_result[0]
+                attention_weights = spp_result[1]
+            else:
+                spp_activations = spp_result
+
+            emb = self.SPP_FC(spp_activations)
+            emb = F.normalize(emb, dim=1, p=2)
+            res[f'Emb{i+1}'] = emb
+            # if self.training:
+            #     res[f'Emb{i+1}_activations'] = activ_maps
+            if self.output_attention_weights:
+                res[f'AttentionWeights{i+1}'] = attention_weights
+        return res
+
     def forward_one(self, x):
 
         activ_map = self.backbone_cnn(x)
 
-        spp_result = self.encoder_spp(activ_map, x.size(0),
+        spp_result = self.encoder_spp(activ_map, activ_map.size(0),
                                       [int(activ_map.size(2)), int(activ_map.size(3))])
         if self.output_attention_weights:
             spp_activations = spp_result[0]
@@ -99,18 +128,16 @@ class MultiscaleTransformerEncoder(nn.Module):
         else:
             spp_activations = spp_result
 
-        res = self.SPP_FC(spp_activations)
-        res = F.normalize(res, dim=1, p=2)
-
-        if self.output_attention_weights:
-            return res, attention_weights
-        return res
+        emb = self.SPP_FC(spp_activations)
+        emb = F.normalize(emb, dim=1, p=2)
+        return emb
 
     def forward(self, x1, x2):
         res = dict()
         if not self.output_attention_weights:
-            res['Emb1'] = self.forward_one(x1)
-            res['Emb2'] = self.forward_one(x2)
+
+            emb1, emb2 = self.forward_one(x1), self.forward_one(x2)
+            return emb1, emb2
         else:
             res['Emb1'], res['Emb1Attention'] = self.forward_one(x1)
             res['Emb2'], res['Emb2Attention'] = self.forward_one(x2)

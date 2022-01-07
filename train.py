@@ -15,13 +15,30 @@ from tqdm import tqdm
 
 from datasets.DatasetPairwiseTriplets import DatasetPairwiseTriplets
 from networks.MultiscaleTransformerEncoder import MultiscaleTransformerEncoder
-from networks.losses import OnlineHardNegativeMiningTripletLoss
+from networks.losses import OnlineHardNegativeMiningTripletLoss, calc_style_loss
 from util.read_hdf5_data import read_hdf5_data
 from util.utils import load_model, MultiEpochsDataLoader, MyGradScaler, save_best_model_stats, evaluate_test, \
     load_test_datasets, evaluate_validation, load_validation_set
 from util.warmup_scheduler import GradualWarmupSchedulerV2
+import torch.distributed as dist
+import torch.multiprocessing as mp
+from torch.nn.parallel import DistributedDataParallel as DDP
+from torch.utils.data.distributed import DistributedSampler
+
 
 warnings.filterwarnings("ignore", message="UserWarning: albumentations.augmentations.transforms.RandomResizedCrop")
+
+
+def setup(rank, world_size):
+    os.environ['MASTER_ADDR'] = 'localhost'
+    os.environ['MASTER_PORT'] = '12355'
+
+    # initialize the process group
+    dist.init_process_group("gloo", rank=rank, world_size=world_size)
+
+
+def cleanup():
+    dist.destroy_process_group()
 
 
 def assert_dir(dir_path):
@@ -69,11 +86,13 @@ def train(net, train_dataloader, start_epoch, device, warmup_epochs, generator_m
     scaler = MyGradScaler()
 
     for epoch in range(start_epoch, epochs):
+        train_dataloader.sampler.set_epoch(epoch)
         optimizer.zero_grad()
         is_warmup_phase = epoch - start_epoch < warmup_epochs
 
         if is_warmup_phase:
-            print('\n', colored('Warmup step #' + repr(epoch - start_epoch), 'green', attrs=['reverse', 'blink']))
+            if device == 0:
+                print('\n', colored('Warmup step #' + repr(epoch - start_epoch), 'green', attrs=['reverse', 'blink']))
             scheduler_warmup.step()
         else:
             if epoch > start_epoch:
@@ -84,13 +103,14 @@ def train(net, train_dataloader, start_epoch, device, warmup_epochs, generator_m
                     scheduler.step(total_test_err)
         running_loss = 0
 
-        log = 'LR: '
-        for param_group in optimizer.param_groups:
-            log += repr(param_group['lr']) + ' '
-        print('\n', colored(log, 'blue', attrs=['reverse', 'blink']))
+        if device == 0:
+            log = 'LR: '
+            for param_group in optimizer.param_groups:
+                log += repr(param_group['lr']) + ' '
+            print('\n', colored(log, 'blue', attrs=['reverse', 'blink']))
 
-        print('negative_mining_mode: ' + criterion.mode)
-        print('generator_mode: ' + generator_mode)
+            print('negative_mining_mode: ' + criterion.mode)
+            print('generator_mode: ' + generator_mode)
 
         should_mine_hard_negatives = criterion.mode == 'Random' and \
                                      optimizer.param_groups[0]['lr'] <= (lr_rate / 1e3 + 1e-8) and \
@@ -126,19 +146,21 @@ def train(net, train_dataloader, start_epoch, device, warmup_epochs, generator_m
             pos1 = np.reshape(pos1, (pos1.shape[0] * pos1.shape[1], 1, pos1.shape[2], pos1.shape[3]), order='F')
             pos2 = np.reshape(pos2, (pos2.shape[0] * pos2.shape[1], 1, pos2.shape[2], pos2.shape[3]), order='F')
 
-            pos1, pos2 = pos1.to(device), pos2.to(device)
+            # pos1, pos2 = pos1.to(device), pos2.to(device) # stripped due to distributed sampler
 
             emb = net(pos1, pos2)
 
-            loss = criterion(emb['Emb1'], emb['Emb2']) + criterion(emb['Emb2'], emb['Emb1'])
+            loss = criterion(emb[0], emb[1]) + criterion(emb[1], emb[0])
 
+            # loss += calc_style_loss(content_feats=emb['Emb1_activations'], style_feats=emb['Emb2_activations'])
+            # loss += calc_style_loss(content_feats=emb['Emb2_activations'], style_feats=emb['Emb1_activations'])
             scaler.scale(loss).backward()
             scaler.step(optimizer)
             scaler.update()
 
             running_loss += loss.item()
-            if epoch >= 40:
-                evaluate_net_steps = 20
+            # if epoch >= 70:
+            #     evaluate_net_steps = 20
             if (batch_num % evaluate_net_steps == 0 or batch_num * inner_batch_size >= len(train_dataloader) - 1) and \
                     batch_num > 0:
 
@@ -173,8 +195,9 @@ def train(net, train_dataloader, start_epoch, device, warmup_epochs, generator_m
                     print('\n', colored('Best error found and saved: ' + repr(total_test_err)[0:5], 'red',
                                         attrs=['reverse', 'blink']))
                     filepath = os.path.join(models_dir, best_file_name + '.pth')
-                    # torch.save(state, filepath)
-                    save_best_model_stats(models_dir, epoch, total_test_err, test_data)
+                    if device == 0:
+                        # torch.save(state, filepath)
+                        save_best_model_stats(models_dir, epoch, total_test_err, test_data)
 
                 log = '[%d, %5d] Loss: %.3f' % (epoch, batch_num, 100 * running_loss) + ' Val Error: ' + repr(val_err)[
                                                                                                          0:6]
@@ -224,14 +247,18 @@ def parse_args():
     parser.add_argument('--dataset-path', default='visnir', help='dataset name')
     parser.add_argument('--warmup-epochs', type=int, default=14, help='warmup epochs')
     parser.add_argument('--scheduler-patience', type=int, default=6, help='scheduler patience epochs')
+    parser.add_argument('--debug', type=bool, const=True, default=False,
+                        help='whether to run in debug mode', nargs='?')
     return parser.parse_args()
 
 
-def main():
+def main(rank, world_size):
+    setup(rank, world_size)
     args = parse_args()
     np.random.seed(0)
     torch.manual_seed(0)
-    device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
+    # device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
+    device = rank
     gpus_num = torch.cuda.device_count()
     torch.cuda.empty_cache()
     GPUtil.showUtilization()
@@ -286,11 +313,14 @@ def main():
 
     train_dataset = DatasetPairwiseTriplets(train_data, train_labels, inner_batch_size, augmentations,
                                             generator_mode)
-    train_dataloader = MultiEpochsDataLoader(train_dataset, batch_size=outer_batch_size, shuffle=True,
-                                             num_workers=8, pin_memory=True)
+    sampler = DistributedSampler(train_dataset, num_replicas=world_size, rank=device, shuffle=True, drop_last=False)
+    train_dataloader = MultiEpochsDataLoader(train_dataset, batch_size=outer_batch_size,
+                                             num_workers=0, pin_memory=False, drop_last=False, sampler=sampler)
+    test_data = None
+    if not args.debug:
+        test_data = load_test_datasets(test_dir)
 
-    test_data = load_test_datasets(test_dir)
-
+    criterion = OnlineHardNegativeMiningTripletLoss(margin=1, mode=negative_mining_mode, device=rank)
     net = MultiscaleTransformerEncoder(dropout)
     optimizer = create_optimizer(net, lr_rate, weight_decay)
     start_epoch = 0
@@ -305,8 +335,10 @@ def main():
 
     if gpus_num > 1:
         print("Using", torch.cuda.device_count(), "GPUs")
-        net = nn.DataParallel(net)
-    net.to(device)
+        net = net.to(device)
+        net = DDP(net, device_ids=[device], output_device=device, find_unused_parameters=True)
+        # net = nn.DataParallel(net)
+        # net.to(device)
 
     scheduler = ReduceLROnPlateau(optimizer, mode='min', factor=0.1, patience=scheduler_patience, verbose=True)
 
@@ -314,13 +346,17 @@ def main():
     scheduler_warmup = GradualWarmupSchedulerV2(optimizer, multiplier=1, total_epoch=warmup_epochs,
                                                 after_scheduler=StepLR(optimizer, step_size=3, gamma=0.1))
 
-    criterion = OnlineHardNegativeMiningTripletLoss(margin=1, mode=negative_mining_mode, device=device)
 
     train(net, train_dataloader, start_epoch, device, warmup_epochs, generator_mode, lr_rate, weight_decay,
           writer, evaluate_net_steps, models_dir, best_file_name, outer_batch_size, inner_batch_size,
           optimizer, scheduler, scheduler_warmup, criterion, lowest_err, arch_desc, test_data, val_data, val_labels,
           epochs, scheduler_patience)
+    cleanup()
 
 
 if __name__ == '__main__':
-    main()
+    world_size = torch.cuda.device_count()
+    mp.spawn(main,
+             args=(world_size,),
+             nprocs=world_size,
+             join=True)

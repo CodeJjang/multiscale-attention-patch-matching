@@ -4,7 +4,7 @@ import torch.nn.functional as F
 from torch.nn import Dropout
 
 from layers.spp_layer import spatial_pyramid_pool
-
+import torch.utils.checkpoint
 
 class BackboneCNN(nn.Module):
 
@@ -44,6 +44,53 @@ class BackboneCNN(nn.Module):
             nn.BatchNorm2d(128, affine=False),
         )
 
+        # self.layer_1 = nn.Sequential(
+        #     nn.Conv2d(1, 32, kernel_size=3, padding=1, bias=False),
+        #     nn.BatchNorm2d(32, affine=False),
+        #     nn.ReLU()
+        # )
+        #
+        # self.layer_2 = nn.Sequential(
+        #     nn.Conv2d(32, 32, kernel_size=3, padding=1, bias=False),
+        #     nn.BatchNorm2d(32, affine=False),
+        #     nn.ReLU()
+        # )
+        #
+        # self.layer_3 = nn.Sequential(
+        #     nn.Conv2d(32, 64, kernel_size=3, stride=2, padding=1, dilation=2, bias=False),  # stride = 2
+        #     nn.BatchNorm2d(64, affine=False),
+        #     nn.ReLU()
+        # )
+        #
+        # self.layer_4 = nn.Sequential(
+        #     nn.Conv2d(64, 64, kernel_size=3, padding=1, bias=False),
+        #     nn.BatchNorm2d(64, affine=False),
+        #     nn.ReLU()
+        # )
+        #
+        # self.layer_5 = nn.Sequential(
+        #     nn.Conv2d(64, 128, kernel_size=3, stride=1, padding=1, dilation=2, bias=False),  # stride = 2  wrong:10368
+        #     nn.BatchNorm2d(128, affine=False),
+        #     nn.ReLU()
+        # )
+        #
+        # self.layer_6 = nn.Sequential(
+        #     nn.Conv2d(128, 128, kernel_size=3, padding=1, bias=False),
+        #     nn.BatchNorm2d(128, affine=False),
+        #     nn.ReLU()
+        # )
+        #
+        # self.layer_7 = nn.Sequential(
+        #     nn.Conv2d(128, 128, kernel_size=3, stride=1, padding=1, bias=False),  # batch_size, 128,8,8
+        #     nn.BatchNorm2d(128, affine=False),
+        #     nn.ReLU()
+        # )
+        #
+        # self.layer_8 = nn.Sequential(
+        #     nn.Conv2d(128, 128, kernel_size=3, stride=1, padding=1, bias=False),
+        #     nn.BatchNorm2d(128, affine=False)
+        # )
+
         self.output_feat_map = output_feat_map
         if not output_feat_map:
             self.output_num = [8, 4, 2, 1]
@@ -62,9 +109,20 @@ class BackboneCNN(nn.Module):
         return (x - mp.detach().unsqueeze(-1).unsqueeze(-1).unsqueeze(-1).expand_as(x)) / sp.detach().unsqueeze(
             -1).unsqueeze(-1).unsqueeze(1).expand_as(x)
 
+    def block_with_feats(self, x):
+        feats = [x]
+        for i in range(1, 9): # 9
+            # feats.append(getattr(self, f'layer_{i}')(feats[-1]))
+            feats.append(torch.utils.checkpoint.checkpoint(getattr(self, f'layer_{i}'), feats[-1]))
+        if self.training:
+            return feats[1:]
+        return [feats[-1]]
+
     def forward(self, x, mode='Normalized'):
         batch_size = x.size(0)
+        # conv_feats = self.block_with_feats(self.input_norm(x))
         conv_feats = self.block(self.input_norm(x))
+        # conv_feats = torch.utils.checkpoint.checkpoint(self.block, self.input_norm(x))
         if self.output_feat_map:
             return conv_feats
 
