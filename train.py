@@ -137,7 +137,7 @@ def train(net, train_dataloader, start_epoch, device, warmup_epochs, generator_m
             scaler.update()
 
             running_loss += loss.item()
-            if epoch >= 40:
+            if epoch >= 50:
                 evaluate_net_steps = 20
             if (batch_num % evaluate_net_steps == 0 or batch_num * inner_batch_size >= len(train_dataloader) - 1) and \
                     batch_num > 0:
@@ -209,6 +209,8 @@ def parse_args():
     parser.add_argument('--evaluate-every', type=int, default=100, help='evaluate network and print steps')
     parser.add_argument('--skip-validation', type=bool, const=True, default=False,
                         help='whether to skip validation evaluation', nargs='?')
+    parser.add_argument('--skip-test', type=bool, const=True, default=False,
+                        help='whether to skip test evaluation', nargs='?')
     parser.add_argument('--continue-from-checkpoint', type=bool, const=True, default=False,
                         nargs='?', help='whether to continue training from checkpoint')
     parser.add_argument('--continue-from-best-score', type=bool, const=True, default=False,
@@ -253,6 +255,7 @@ def main():
     generator_mode = 'Pairwise'
     negative_mining_mode = 'Random'
     skip_validation = args.skip_validation
+    skip_test = args.skip_test
     lr_rate = args.lr
     weight_decay = args.weight_decay
     dropout = args.dropout
@@ -289,7 +292,9 @@ def main():
     train_dataloader = MultiEpochsDataLoader(train_dataset, batch_size=outer_batch_size, shuffle=True,
                                              num_workers=8, pin_memory=True)
 
-    test_data = load_test_datasets(test_dir)
+    test_data = None
+    if not skip_test:
+        test_data = load_test_datasets(test_dir)
 
     net = MultiscaleTransformerEncoder(dropout)
     optimizer = create_optimizer(net, lr_rate, weight_decay)
