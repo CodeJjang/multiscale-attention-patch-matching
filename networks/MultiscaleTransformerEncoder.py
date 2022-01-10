@@ -77,8 +77,7 @@ class MultiscaleTransformerEncoder(nn.Module):
                 query = self.query.repeat(1, seq.shape[1], 1)
                 seq = torch.cat((query, seq), 0)
 
-                enc_output = self.encoder(src=seq, pos=pos_encoding)
-                # enc_output = torch.utils.checkpoint.checkpoint(self.encoder, seq, None, None, pos_encoding)
+                enc_output = torch.utils.checkpoint.checkpoint(self.encoder, seq, None, None, pos_encoding)
 
                 cls_token = enc_output[0,]
                 if self.output_attention_weights and i == 1:
