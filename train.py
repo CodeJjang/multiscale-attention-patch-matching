@@ -131,9 +131,9 @@ def train(net, train_dataloader, start_epoch, device, warmup_epochs, generator_m
 
             emb = net(pos1, pos2)
 
-            loss = criterion(emb[0], emb[1]) + criterion(emb[1], emb[0])
+            loss = criterion(emb['Emb1'], emb['Emb2']) + criterion(emb['Emb2'], emb['Emb1'])
 
-            # loss += calc_style_loss(content_feats=emb['Emb1_activations'], style_feats=emb['Emb2_activations'])
+            loss += calc_style_loss(content_feats=emb['Emb1_activations'], style_feats=emb['Emb2_activations'])
             # loss += calc_style_loss(content_feats=emb['Emb2_activations'], style_feats=emb['Emb1_activations'])
             scaler.scale(loss).backward()
             scaler.step(optimizer)

@@ -92,11 +92,11 @@ class MultiscaleTransformerEncoder(nn.Module):
     def forward_two(self, x1, x2):
 
         activ_maps1, activ_maps2 = self.backbone_cnn(x1), self.backbone_cnn(x2)
-        # activ_maps1[-1] = adain(content_feat=activ_maps1[-1], style_feat=activ_maps2[-1])
+        activ_maps1[-1] = adain(content_feat=activ_maps1[-1], style_feat=activ_maps2[-1])
         # activ_maps2[-1] = adain(content_feat=activ_maps2[-1], style_feat=activ_maps1[-1])
         res = {}
-        for i, activ_map in enumerate([activ_maps1, activ_maps2]):
-            # activ_map = activ_maps[-1]
+        for i, activ_maps in enumerate([activ_maps1, activ_maps2]):
+            activ_map = activ_maps[-1]
 
             spp_result = self.encoder_spp(activ_map, activ_map.size(0),
                                           [int(activ_map.size(2)), int(activ_map.size(3))])
@@ -109,8 +109,8 @@ class MultiscaleTransformerEncoder(nn.Module):
             emb = self.SPP_FC(spp_activations)
             emb = F.normalize(emb, dim=1, p=2)
             res[f'Emb{i+1}'] = emb
-            # if self.training:
-            #     res[f'Emb{i+1}_activations'] = activ_maps
+            if self.training:
+                res[f'Emb{i+1}_activations'] = activ_maps
             if self.output_attention_weights:
                 res[f'AttentionWeights{i+1}'] = attention_weights
         return res
@@ -135,8 +135,9 @@ class MultiscaleTransformerEncoder(nn.Module):
         res = dict()
         if not self.output_attention_weights:
 
-            emb1, emb2 = self.forward_one(x1), self.forward_one(x2)
-            return emb1, emb2
+            # emb1, emb2 = self.forward_one(x1), self.forward_one(x2)
+            # return emb1, emb2
+            return self.forward_two(x1, x2)
         else:
             res['Emb1'], res['Emb1Attention'] = self.forward_one(x1)
             res['Emb2'], res['Emb2Attention'] = self.forward_one(x2)

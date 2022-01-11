@@ -173,7 +173,7 @@ def evaluate_network(net, data1, data2, device, step_size=800):
             a = data1[k:(k + step_size), :, :, :]
             b = data2[k:(k + step_size), :, :, :]
 
-            # a, b = a.to(device), b.to(device)
+            a, b = a.to(device), b.to(device)
             x = net(a, b)
 
             if k == 0:
@@ -235,7 +235,7 @@ def evaluate_test(net, test_data, device, step_size=800):
         dataset = test_data[dataset_name]
         emb = evaluate_network(net, dataset['Data'][:, :, :, :, 0], dataset['Data'][:, :, :, :, 1], device, step_size)
 
-        dist = np.power(emb[0] - emb[1], 2).sum(1)
+        dist = np.power(emb['Emb1'] - emb['Emb2'], 2).sum(1)
         dataset['TestError'] = FPR95Accuracy(dist, dataset['Labels']) * 100
         total_test_err += dataset['TestError'] * dataset['Data'].shape[0]
         samples_amount += dataset['Data'].shape[0]
