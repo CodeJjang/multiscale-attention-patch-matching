@@ -127,7 +127,7 @@ class OnlineHardNegativeMiningTripletLoss(nn.Module):
     triplets
     """
 
-    def __init__(self, margin, mode, margin_ratio=1, pos_ratio=1, neg_pow=1, pos_pow=1, device=None):
+    def __init__(self, margin, mode, margin_ratio=1, pos_ratio=1, neg_pow=1, pos_pow=1, device=None, sos_loss=True):
         super(OnlineHardNegativeMiningTripletLoss, self).__init__()
         self.margin = margin
         self.mode = mode
@@ -136,6 +136,7 @@ class OnlineHardNegativeMiningTripletLoss(nn.Module):
         self.pos_pow = pos_pow
         self.neg_pow = neg_pow
         self.device = device
+        self.sos_loss = sos_loss
 
     def forward(self, emb1, emb2):
 
@@ -185,7 +186,16 @@ class OnlineHardNegativeMiningTripletLoss(nn.Module):
         else:
             losses = 0
 
-        return losses
+        sos_loss = 0
+        if self.sos_loss:
+            pn_distances = (emb1 - emb2[neg_idx, :]).pow(2).sum(1)
+            an_distances = (emb2 - emb1[neg_idx, :]).pow(2).sum(1)
+            margin = an_distances - pn_distances
+            sos_loss = F.relu(margin.pow(2))
+            idx = torch.where(sos_loss > 0)[0]
+            sos_loss = sos_loss[idx].mean() ** 0.5
+
+        return losses + sos_loss
 
 
 class InnerProduct(nn.Module):
