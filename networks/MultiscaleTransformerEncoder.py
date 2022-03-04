@@ -36,10 +36,71 @@ class MultiscaleTransformerEncoder(nn.Module):
         self.encoder = TransformerEncoder(encoder_layer=self.encoder_layer, num_layers=encoder_layers)
 
         # self.SPP_FC = nn.Linear(8576, encoder_dim) # for [8,4,2,1] SPP
-        self.SPP_FC = nn.Linear(8704, encoder_dim)  # for [8,8,4,2,1] SPP
+        # self.SPP_FC = nn.Linear(8704, encoder_dim)  # for [8,8,4,2,1] SPP
+        self.SPP_FC = nn.Linear(8320, encoder_dim)  # for [8,8,4,2,1] SPP
         self.output_attention_weights = output_attention_weights
 
     def encoder_spp(self, previous_conv, num_sample, previous_conv_size):
+        attention_weights = []
+        residual = None
+        multi_level_seq = None
+        positional_encodings = None
+        for i in range(len(self.spp_levels)):
+
+            # Pooling support
+            h_wid = int(math.ceil(previous_conv_size[0] / self.spp_levels[i]))
+            w_wid = int(math.ceil(previous_conv_size[1] / self.spp_levels[i]))
+
+            # Padding to retain orthogonal dimensions
+            h_pad = int((h_wid * self.spp_levels[i] - previous_conv_size[0] + 1) / 2)
+            w_pad = int((w_wid * self.spp_levels[i] - previous_conv_size[1] + 1) / 2)
+
+            # apply pooling
+            maxpool = nn.MaxPool2d((h_wid, w_wid), stride=(h_wid, w_wid), padding=(h_pad, w_pad))
+
+            y = maxpool(previous_conv)
+
+            if i == 0:
+                residual = y.reshape(num_sample, -1)
+            else:
+                pos_encoding_2d = prepare_2d_pos_encodings(self.pos_encoding_x,
+                                                           self.pos_encoding_y,
+                                                           y.shape[2], y.shape[3])
+
+                pos_encoding = pos_encoding_2d.permute(2, 0, 1)
+                pos_encoding = pos_encoding[:, 0:y.shape[2], 0:y.shape[3]]
+                pos_encoding = pos_encoding.reshape(
+                    (pos_encoding.shape[0], pos_encoding.shape[1] * pos_encoding.shape[2]))
+                pos_encoding = pos_encoding.permute(1, 0).unsqueeze(1)
+                if i == 1:
+                    pos_encoding = torch.cat((self.query_pos_encoding.unsqueeze(0), pos_encoding), 0)
+
+                seq = y.reshape((y.shape[0], y.shape[1], y.shape[2] * y.shape[3]))
+                seq = seq.permute(2, 0, 1)
+
+                if i == 1:
+                    query = self.query.repeat(1, seq.shape[1], 1)
+                    seq = torch.cat((query, seq), 0)
+
+                if multi_level_seq is not None:
+                    multi_level_seq = torch.cat((multi_level_seq, seq), 0)
+                    positional_encodings = torch.cat((positional_encodings, pos_encoding), 0)
+                else:
+                    multi_level_seq = seq
+                    positional_encodings = pos_encoding
+
+        enc_output = torch.utils.checkpoint.checkpoint(self.encoder, multi_level_seq, None, None, positional_encodings)
+
+        cls_token = enc_output[0,]
+        pred = torch.cat((residual, cls_token), 1)
+        if self.output_attention_weights and i == 1:
+            attention_weights = enc_output[1:].transpose(1, 0)
+
+        if self.output_attention_weights:
+            return pred, attention_weights
+        return pred
+
+    def original_encoder_spp(self, previous_conv, num_sample, previous_conv_size):
         attention_weights = []
         for i in range(len(self.spp_levels)):
 
