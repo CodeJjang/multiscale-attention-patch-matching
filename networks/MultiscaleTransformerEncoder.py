@@ -30,17 +30,22 @@ class MultiscaleTransformerEncoder(nn.Module):
         encoder_layers = 2
         encoder_heads = 2
 
-        self.encoder_layer = TransformerEncoderLayer(d_model=encoder_dim, nhead=encoder_heads,
+        self.encoder_layer1 = TransformerEncoderLayer(d_model=encoder_dim, nhead=encoder_heads,
                                                      dim_feedforward=int(encoder_dim),
                                                      dropout=0.1, activation="relu", normalize_before=False)
-        self.encoder = TransformerEncoder(encoder_layer=self.encoder_layer, num_layers=encoder_layers)
+        self.encoder1 = TransformerEncoder(encoder_layer=self.encoder_layer1, num_layers=encoder_layers)
+
+        self.encoder_layer2 = TransformerEncoderLayer(d_model=encoder_dim, nhead=encoder_heads,
+                                                     dim_feedforward=int(encoder_dim),
+                                                     dropout=0.1, activation="relu", normalize_before=False)
+        self.encoder2 = TransformerEncoder(encoder_layer=self.encoder_layer2, num_layers=encoder_layers)
 
         # self.SPP_FC = nn.Linear(8576, encoder_dim) # for [8,4,2,1] SPP
         # self.SPP_FC = nn.Linear(8704, encoder_dim)  # for [8,8,4,2,1] SPP
         self.SPP_FC = nn.Linear(8320, encoder_dim)  # for [8,8,4,2,1] SPP
         self.output_attention_weights = output_attention_weights
 
-    def encoder_spp(self, previous_conv, num_sample, previous_conv_size):
+    def encoder_spp(self, previous_conv, num_sample, previous_conv_size, encoder):
         attention_weights = []
         residual = None
         multi_level_seq = None
@@ -89,7 +94,7 @@ class MultiscaleTransformerEncoder(nn.Module):
                     multi_level_seq = seq
                     positional_encodings = pos_encoding
 
-        enc_output = torch.utils.checkpoint.checkpoint(self.encoder, multi_level_seq, None, None, positional_encodings)
+        enc_output = torch.utils.checkpoint.checkpoint(encoder, multi_level_seq, None, None, positional_encodings)
 
         cls_token = enc_output[0,]
         pred = torch.cat((residual, cls_token), 1)
@@ -149,12 +154,12 @@ class MultiscaleTransformerEncoder(nn.Module):
             return spp, attention_weights
         return spp
 
-    def forward_one(self, x):
+    def forward_one(self, x, encoder):
 
         activ_map = self.backbone_cnn(x)
 
         spp_result = self.encoder_spp(activ_map, x.size(0),
-                                      [int(activ_map.size(2)), int(activ_map.size(3))])
+                                      [int(activ_map.size(2)), int(activ_map.size(3))], encoder)
         if self.output_attention_weights:
             spp_activations = spp_result[0]
             attention_weights = spp_result[1]
@@ -171,8 +176,8 @@ class MultiscaleTransformerEncoder(nn.Module):
     def forward(self, x1, x2):
         res = dict()
         if not self.output_attention_weights:
-            res['Emb1'] = self.forward_one(x1)
-            res['Emb2'] = self.forward_one(x2)
+            res['Emb1'] = self.forward_one(x1, self.encoder1)
+            res['Emb2'] = self.forward_one(x2, self.encoder2)
         else:
             res['Emb1'], res['Emb1Attention'] = self.forward_one(x1)
             res['Emb2'], res['Emb2Attention'] = self.forward_one(x2)
