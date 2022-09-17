@@ -137,8 +137,8 @@ def train(net, train_dataloader, start_epoch, device, warmup_epochs, generator_m
             scaler.update()
 
             running_loss += loss.item()
-            if epoch >= 50:
-                evaluate_net_steps = 20
+            # if epoch >= 90:
+            #     evaluate_net_steps = 20
             if (batch_num % evaluate_net_steps == 0 or batch_num * inner_batch_size >= len(train_dataloader) - 1) and \
                     batch_num > 0:
 
@@ -173,7 +173,7 @@ def train(net, train_dataloader, start_epoch, device, warmup_epochs, generator_m
                     print('\n', colored('Best error found and saved: ' + repr(total_test_err)[0:5], 'red',
                                         attrs=['reverse', 'blink']))
                     filepath = os.path.join(models_dir, best_file_name + '.pth')
-                    # torch.save(state, filepath)
+                    torch.save(state, filepath)
                     save_best_model_stats(models_dir, epoch, total_test_err, test_data)
 
                 log = '[%d, %5d] Loss: %.3f' % (epoch, batch_num, 100 * running_loss) + ' Val Error: ' + repr(val_err)[
@@ -191,7 +191,7 @@ def train(net, train_dataloader, start_epoch, device, warmup_epochs, generator_m
 
                 # save epoch
                 filepath = models_dir + 'model_epoch_' + repr(epoch) + '.pth'
-                # torch.save(state, filepath)
+                torch.save(state, filepath)
 
             if (batch_num * inner_batch_size) > (len(train_dataloader) - 1):
                 bar.clear()
@@ -226,6 +226,8 @@ def parse_args():
     parser.add_argument('--dataset-path', default='visnir', help='dataset name')
     parser.add_argument('--warmup-epochs', type=int, default=14, help='warmup epochs')
     parser.add_argument('--scheduler-patience', type=int, default=6, help='scheduler patience epochs')
+    parser.add_argument('--desc-dim', type=int, default=128, help='descriptor dimensions')
+
     return parser.parse_args()
 
 
@@ -296,7 +298,7 @@ def main():
     if not skip_test:
         test_data = load_test_datasets(test_dir)
 
-    net = MultiscaleTransformerEncoder(dropout)
+    net = MultiscaleTransformerEncoder(dropout, encoder_dim=args.desc_dim)
     optimizer = create_optimizer(net, lr_rate, weight_decay)
     start_epoch = 0
     lowest_err = 1e10

@@ -9,7 +9,7 @@ from layers.spp_layer import spatial_pyramid_pool
 
 class BackboneCNN(nn.Module):
 
-    def __init__(self, dropout, output_feat_map=False):
+    def __init__(self, dropout, output_feat_map=False, desc_dim=128):
         super(BackboneCNN, self).__init__()
 
         self.pre_block = nn.Sequential(
@@ -32,27 +32,27 @@ class BackboneCNN(nn.Module):
             nn.BatchNorm2d(64, affine=False, momentum=0.1 ** 0.5),
             nn.ReLU(),
 
-            nn.Conv2d(64, 128, kernel_size=3, stride=1, padding=1, dilation=2, bias=False),
-            nn.BatchNorm2d(128, affine=False, momentum=0.1 ** 0.5),
+            nn.Conv2d(64, desc_dim, kernel_size=3, stride=1, padding=1, dilation=2, bias=False),
+            nn.BatchNorm2d(desc_dim, affine=False, momentum=0.1 ** 0.5),
             nn.ReLU(),
 
-            nn.Conv2d(128, 128, kernel_size=3, padding=1, bias=False),
-            nn.BatchNorm2d(128, affine=False, momentum=0.1 ** 0.5),
+            nn.Conv2d(desc_dim, desc_dim, kernel_size=3, padding=1, bias=False),
+            nn.BatchNorm2d(desc_dim, affine=False, momentum=0.1 ** 0.5),
             nn.ReLU(),
 
-            nn.Conv2d(128, 128, kernel_size=3, stride=1, padding=1, bias=False),
-            nn.BatchNorm2d(128, affine=False, momentum=0.1 ** 0.5),
+            nn.Conv2d(desc_dim, desc_dim, kernel_size=3, stride=1, padding=1, bias=False),
+            nn.BatchNorm2d(desc_dim, affine=False, momentum=0.1 ** 0.5),
             nn.ReLU(),
 
-            nn.Conv2d(128, 128, kernel_size=3, stride=1, padding=1, bias=False),
-            nn.BatchNorm2d(128, affine=False, momentum=0.1 ** 0.5),
+            nn.Conv2d(desc_dim, desc_dim, kernel_size=3, stride=1, padding=1, bias=False),
+            nn.BatchNorm2d(desc_dim, affine=False, momentum=0.1 ** 0.5),
         )
 
         self.output_feat_map = output_feat_map
         if not output_feat_map:
             self.output_num = [8, 4, 2, 1]
             self.fc1 = nn.Sequential(
-                nn.Linear(10880, 128)
+                nn.Linear(10880, desc_dim)
             )
 
         self.dropout = dropout

@@ -15,7 +15,7 @@ class MultiscaleTransformerEncoder(nn.Module):
     def __init__(self, dropout, encoder_dim=128, pos_encoding_dim=20, output_attention_weights=False):
         super(MultiscaleTransformerEncoder, self).__init__()
 
-        self.backbone_cnn = BackboneCNN(output_feat_map=True, dropout=dropout)
+        self.backbone_cnn = BackboneCNN(output_feat_map=True, dropout=dropout, desc_dim=encoder_dim)
 
         self.query = nn.Parameter(torch.randn(1, encoder_dim))
         self.query_pos_encoding = nn.Parameter(torch.randn(1, encoder_dim))
@@ -42,7 +42,8 @@ class MultiscaleTransformerEncoder(nn.Module):
 
         # self.SPP_FC = nn.Linear(8576, encoder_dim) # for [8,4,2,1] SPP
         # self.SPP_FC = nn.Linear(8704, encoder_dim)  # for [8,8,4,2,1] SPP
-        self.SPP_FC = nn.Linear(8320, encoder_dim)  # for [8,8,4,2,1] SPP
+        self.SPP_FC = nn.Linear(8320, encoder_dim)  # for [8,8,4,2,1] SPP with encoder_dim=128
+        # self.SPP_FC = nn.Linear(16640, encoder_dim)  # for [8,8,4,2,1] SPP with encoder_dim=256
         self.output_attention_weights = output_attention_weights
 
     def encoder_spp(self, previous_conv, num_sample, previous_conv_size, encoder):
