@@ -14,6 +14,7 @@ from torch.optim.lr_scheduler import ReduceLROnPlateau, StepLR
 from tqdm import tqdm
 
 from datasets.DatasetPairwiseTriplets import DatasetPairwiseTriplets
+from datasets.SelfSupervisionPairwiseDataset import SelfSupervisionPairwiseDataset
 from networks.MultiscaleTransformerEncoder import MultiscaleTransformerEncoder
 from networks.losses import OnlineHardNegativeMiningTripletLoss
 from util.read_hdf5_data import read_hdf5_data
@@ -227,6 +228,8 @@ def parse_args():
     parser.add_argument('--warmup-epochs', type=int, default=14, help='warmup epochs')
     parser.add_argument('--scheduler-patience', type=int, default=6, help='scheduler patience epochs')
     parser.add_argument('--desc-dim', type=int, default=128, help='descriptor dimensions')
+    parser.add_argument('--ssl', type=bool, const=True, default=False, help='whether to perform ssl training',
+                        nargs='?')
 
     return parser.parse_args()
 
@@ -289,8 +292,12 @@ def main():
     train_data = np.squeeze(train_data[train_indices,])
     train_labels = train_labels[train_indices]
 
-    train_dataset = DatasetPairwiseTriplets(train_data, train_labels, inner_batch_size, augmentations,
-                                            generator_mode)
+    if not args.ssl:
+        train_dataset = DatasetPairwiseTriplets(train_data, train_labels, inner_batch_size, augmentations,
+                                                generator_mode)
+    else:
+        print("Training SSL...")
+        train_dataset = SelfSupervisionPairwiseDataset(train_data, inner_batch_size, augmentations)
     train_dataloader = MultiEpochsDataLoader(train_dataset, batch_size=outer_batch_size, shuffle=True,
                                              num_workers=8, pin_memory=True)
 

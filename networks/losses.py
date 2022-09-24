@@ -183,7 +183,8 @@ class OnlineHardNegativeMiningTripletLoss(nn.Module):
             if torch.isnan(losses):
                 print('Found nan in loss ')
         else:
-            losses = 0
+            print('All losses are zero')
+            losses = torch.tensor([0.], requires_grad=True, device=losses.device)
 
         return losses
 
