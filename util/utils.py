@@ -1,7 +1,7 @@
 import glob
 import json
 import os
-
+import re
 import numpy as np
 import torch
 from torch.optim.lr_scheduler import ReduceLROnPlateau
@@ -77,6 +77,24 @@ def load_model(net, start_best_model, models_dirname, best_filename, use_best_sc
     print('lowest_err: ' + repr(lowest_err)[0:6])
 
     return net, optimizer, lowest_err, start_epoch, scheduler, negative_mining_mode
+
+
+def load_cnn_checkpoint(net, cnn_checkpoint):
+    checkpoint = torch.load(cnn_checkpoint)
+    state_dict = {k.split('backbone.')[1]: v for k,v in checkpoint['state_dict'].items() if 'backbone.' in k}
+    new_state_dict = {}
+    new_state_dict['pre_block.0.weight'] = state_dict['block.0.weight'][:, 0][:, np.newaxis]
+    new_state_dict['pre_block.1.running_mean'] = state_dict['block.1.running_mean']
+    new_state_dict['pre_block.1.running_var'] = state_dict['block.1.running_var']
+    new_state_dict['pre_block.1.num_batches_tracked'] = state_dict['block.1.num_batches_tracked']
+    blocks = list(set([int(re.findall(r'\d+', k)[0]) for k in state_dict.keys()]))[:-2]
+    block_pairs = list(zip(blocks[::2], blocks[1::2]))
+    for block1, block2 in block_pairs:
+        new_state_dict[f'block.{block1}.weight'] = state_dict[f'block.{block1 + 3}.weight']
+        new_state_dict[f'block.{block2}.running_mean'] = state_dict[f'block.{block2 + 3}.running_mean']
+        new_state_dict[f'block.{block2}.running_var'] = state_dict[f'block.{block2 + 3}.running_var']
+        new_state_dict[f'block.{block2}.num_batches_tracked'] = state_dict[f'block.{block2 + 3}.num_batches_tracked']
+    net.backbone_cnn.load_state_dict(new_state_dict, strict=True)
 
 
 class MultiEpochsDataLoader(torch.utils.data.DataLoader):
