@@ -19,7 +19,7 @@ from networks.MultiscaleTransformerEncoder import MultiscaleTransformerEncoder
 from networks.losses import OnlineHardNegativeMiningTripletLoss
 from util.read_hdf5_data import read_hdf5_data
 from util.utils import load_model, MultiEpochsDataLoader, MyGradScaler, save_best_model_stats, evaluate_test, \
-    load_test_datasets, evaluate_validation, load_validation_set, load_cnn_checkpoint
+    load_test_datasets, evaluate_validation, load_validation_set, load_cnn_checkpoint, load_checkpoint
 from util.warmup_scheduler import GradualWarmupSchedulerV2
 
 warnings.filterwarnings("ignore", message="UserWarning: albumentations.augmentations.transforms.RandomResizedCrop")
@@ -32,7 +32,7 @@ def assert_dir(dir_path):
 def load_datasets_paths(ds_name, ds_path, train_file_name='train'):
     if ds_name == 'visnir':
         test_dir = os.path.join(ds_path, 'test\\')
-        train_file = os.path.join(ds_path, 'train\\{}.hdf5'.format(train_file_name))
+        train_file = os.path.join(ds_path, 'train', '{}.hdf5'.format(train_file_name))
     elif ds_name == 'cuhk':
         test_dir = os.path.join(ds_path, 'en_etal\\cuhk\\test\\')
         train_file = os.path.join(ds_path, 'en_etal\\cuhk\\train.hdf5')
@@ -232,6 +232,10 @@ def parse_args():
                         nargs='?')
     parser.add_argument('--train-file-name', default='train', help='train file name')
     parser.add_argument('--cnn-checkpoint', help='cnn checkpoint path')
+    parser.add_argument('--checkpoint', help='cnn checkpoint path')
+    parser.add_argument('--only-backbone', type=bool, const=True, default=False, help='whether to take checkpoint for backbone only',
+                        nargs='?')
+
 
 
     return parser.parse_args()
@@ -319,8 +323,10 @@ def main():
                                                                                                      best_file_name,
                                                                                                      use_best_score,
                                                                                                      device)
-    elif args.cnn_checkpoint:
+    elif args.cnn_checkpoint: # CNN from SimSiam
         load_cnn_checkpoint(net, args.cnn_checkpoint)
+    elif args.checkpoint:
+        load_checkpoint(net, args.checkpoint, args.only_backbone) # Same framework checkpoint
 
     if gpus_num > 1:
         print("Using", torch.cuda.device_count(), "GPUs")

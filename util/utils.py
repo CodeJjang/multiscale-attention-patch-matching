@@ -97,6 +97,15 @@ def load_cnn_checkpoint(net, cnn_checkpoint):
     net.backbone_cnn.load_state_dict(new_state_dict, strict=True)
 
 
+def load_checkpoint(net, cnn_checkpoint, only_backbone=False):
+    checkpoint = torch.load(cnn_checkpoint)
+    if not only_backbone:
+        net.load_state_dict(checkpoint['state_dict'], strict=True)
+    else:
+        backbone_dict = {k.split('backbone_cnn.')[1]: v for k, v in checkpoint['state_dict'].items() if 'backbone_cnn.' in k}
+        net.backbone_cnn.load_state_dict(backbone_dict, strict=True)
+
+
 class MultiEpochsDataLoader(torch.utils.data.DataLoader):
 
     def __init__(self, *args, **kwargs):
