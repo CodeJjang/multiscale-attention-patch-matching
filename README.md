@@ -20,8 +20,8 @@ pip install -r requirements.txt
 ## Datasets
 The following datasets are already preprocessed for efficient training:
 1. [VisNir](https://biu365-my.sharepoint.com/:f:/g/personal/kellery1_biu_ac_il/EluR9hiiq3BJgOgmdvYY6RABH0Nr31_CF_lO1QtcBQgt2A).
-2. [En etal](https://mega.nz/file/S05j0K6b#53SEnKc58Fh8IE56MS02zsi2GpJVRKymItKow3aQ8ZA).
-3. [UBC](https://mega.nz/file/C9p2SCxS#b7QlCFRhrYKQjZujcSRft3XT1sURf6MMGC8M89QdMB0).
+2. [En etal](https://biu365-my.sharepoint.com/:f:/g/personal/kellery1_biu_ac_il/EluR9hiiq3BJgOgmdvYY6RABH0Nr31_CF_lO1QtcBQgt2A).
+3. [UBC](https://biu365-my.sharepoint.com/:f:/g/personal/kellery1_biu_ac_il/EluR9hiiq3BJgOgmdvYY6RABH0Nr31_CF_lO1QtcBQgt2A).
 
 The VisNir dataset is availible to dowload as:
 https://biu365-my.sharepoint.com/:f:/g/personal/kellery1_biu_ac_il/EluR9hiiq3BJgOgmdvYY6RABH0Nr31_CF_lO1QtcBQgt2A?e=6TeLYy
