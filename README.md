@@ -20,8 +20,8 @@ pip install -r requirements.txt
 ## Datasets
 The following datasets are already preprocessed for efficient training:
 1. [VisNir]  https://biu365-my.sharepoint.com/:f:/g/personal/kellery1_biu_ac_il/EmMhyd3UdKNIr0O8IpAUcJwBgMEYXRJS7lA2WCSk9X15vg?e=yVNVu3.
-2. [En etal]([https://biu365-my.sharepoint.com/:f:/g/personal/kellery1_biu_ac_il/EluR9hiiq3BJgOgmdvYY6RABH0Nr31_CF_lO1QtcBQgt2A](https://biu365-my.sharepoint.com/:f:/g/personal/kellery1_biu_ac_il/EuQ70WqSFLNNk7JjYof0kPIBpblOCiJprqUBzSaT5Rhd8A?e=iBvv7z)).
-3. [UBC]([https://biu365-my.sharepoint.com/:f:/g/personal/kellery1_biu_ac_il/EluR9hiiq3BJgOgmdvYY6RABH0Nr31_CF_lO1QtcBQgt2A](https://biu365-my.sharepoint.com/:u:/g/personal/kellery1_biu_ac_il/EfcO4wg0jIFAlJKu5TRhyMYBP-Mpb6buYube1or_zV0guA?e=tCsnTt)).
+2. [En etal] https://biu365-my.sharepoint.com/:f:/g/personal/kellery1_biu_ac_il/EuQ70WqSFLNNk7JjYof0kPIBpblOCiJprqUBzSaT5Rhd8A?e=iBvv7z.
+3. [UBC] https://biu365-my.sharepoint.com/:u:/g/personal/kellery1_biu_ac_il/EfcO4wg0jIFAlJKu5TRhyMYBP-Mpb6buYube1or_zV0guA?e=tCsnTt.
 
 
 Re-arrange the test folders with the test datasets containing the appropriate data as follows: test_yos_not, test_lib_yos, test_lib_not, for training on liberty, notredame and yosemite respectively.
